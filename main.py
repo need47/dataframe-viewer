@@ -126,15 +126,8 @@ def dtype_style_map() -> Dict[str, Dict[str, str]]:
 def build_table(df: pl.DataFrame, start: int, end: int, box_style=box.SIMPLE) -> Table:
     styles = dtype_style_map()
 
-    # Explicitly enable headers; some environments (piped / non-TTY via uv run | head) may
-    # suppress them if Rich detects non-interactive output. Setting show_header=True
-    # and a header_style makes headers reliably visible.
-    # padding=(0,1,0,1) = (top, right, bottom, left) removes vertical padding
-    table = Table(
-        box=box_style,
-        expand=True,
-        padding=(0, 1, 0, 1),
-    )
+    # Create table with specified box style
+    table = Table(box=box_style, expand=True)
 
     # Add columns with styles based on dtype
     for col, dtype in zip(df.columns, df.dtypes):
@@ -204,10 +197,10 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
     # Account for:
     # - Table header takes 3 lines (top border + header text + separator line) if it is boxed else 1 line
     # - Status bar takes 1 line
-    # So data rows = total height - (header_height + 1)
-    # This should give us ~50 rows in a standard 54-line terminal
+    # So data rows = total height - (header_height + status_height)
     header_height = 3 if box_style else 1
-    page = max(height - (header_height + 1), 1)
+    status_height = 1
+    page = max(height - (header_height + status_height), 1)
     total = df.height
     start = 0
 
