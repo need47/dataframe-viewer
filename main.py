@@ -52,6 +52,63 @@ def read_key() -> Keypress:
             os.close(tty_fd)
 
 
+def handle_keypress(start: int, page: int, total: int) -> int:
+    """Process keyboard input and return new start position.
+
+    Returns:
+        New start position, or -1 if user wants to quit
+    """
+    key = read_key()
+
+    # Quit
+    if key.char == "q":
+        return -1
+
+    # Enter key (PageDown) ord=13 or '\r'
+    elif key.char == "\r" or key.code == 13:
+        new_start = start + page
+        # Don't go past the end; last page may show fewer rows
+        if new_start < total:
+            return new_start
+        # If at the end, exit
+        elif new_start >= total:
+            return -1
+
+    # Ctrl+F (forward page) ord=6
+    elif key.code == 6:
+        return min(start + page, total - 1)
+
+    # Ctrl+B (back page) ord=2
+    elif key.code == 2:
+        return max(start - page, 0)
+
+    # Home key (go to first page) - ESC[H or ESC[1~
+    elif key.char in ("\x1b[H", "\x1b[1~"):
+        return 0
+
+    # End key (go to last page) - ESC[F or ESC[4~
+    elif key.char in ("\x1b[F", "\x1b[4~"):
+        # Go to last page showing remaining rows
+        return max(0, total - page)
+
+    # Arrow up/down and other escape sequences
+    elif key.char.startswith("\x1b["):
+        if len(key.char) >= 3:
+            code = key.char[2]
+            if code == "A":  # Up arrow
+                return max(start - 1, 0)
+            elif code == "B":  # Down arrow
+                return min(start + 1, total - 1)
+        # Check full sequence for PageUp/PageDown
+        if key.char == "\x1b[5~":  # PageUp
+            return max(start - page, 0)
+        elif key.char == "\x1b[6~":  # PageDown
+            return min(start + page, total - 1)
+
+    # No change
+    return start
+
+
 def dtype_style_map() -> Dict[str, Dict[str, str]]:
     return {
         "Int64": {"style": "cyan", "justify": "right"},
@@ -163,51 +220,15 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
         auto_refresh=False,
     ) as live:
         while True:
-            key = read_key()
-            old_start = start
+            new_start = handle_keypress(start, page, total)
 
-            # Quit
-            if key.char == "q":
+            # User wants to quit
+            if new_start == -1:
                 break
 
-            # Enter key (PageDown) ord=13 or '\r'
-            elif key.char == "\r" or key.code == 13:
-                new_start = start + page
-                # Don't go past the end; last page may show fewer rows
-                if new_start < total:
-                    start = new_start
-                # If at the end, exit
-                elif new_start >= total:
-                    break
-            # Ctrl+F (forward page) ord=6
-            elif key.code == 6:
-                start = min(start + page, total - 1)
-            # Ctrl+B (back page) ord=2
-            elif key.code == 2:
-                start = max(start - page, 0)
-            # Home key (go to first page) - ESC[H or ESC[1~
-            elif key.char in ("\x1b[H", "\x1b[1~"):
-                start = 0
-            # End key (go to last page) - ESC[F or ESC[4~
-            elif key.char in ("\x1b[F", "\x1b[4~"):
-                # Go to last page showing remaining rows
-                start = max(0, total - page)
-            # Arrow up/down and other escape sequences
-            elif key.char.startswith("\x1b["):
-                if len(key.char) >= 3:
-                    code = key.char[2]
-                    if code == "A":  # Up arrow
-                        start = max(start - 1, 0)
-                    elif code == "B":  # Down arrow
-                        start = min(start + 1, total - 1)
-                # Check full sequence for PageUp/PageDown
-                if key.char == "\x1b[5~":  # PageUp
-                    start = max(start - page, 0)
-                elif key.char == "\x1b[6~":  # PageDown
-                    start = min(start + page, total - 1)
-
             # Only update display if position changed
-            if start != old_start:
+            if new_start != start:
+                start = new_start
                 end = min(start + page, total)
                 live.update(build_display(df, filename, start, end, total, box_style))
                 live.refresh()
