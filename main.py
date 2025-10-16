@@ -1,5 +1,4 @@
 import sys
-import shutil
 import termios
 import tty
 import os
@@ -55,9 +54,9 @@ def read_key() -> Keypress:
 
 def dtype_style_map() -> Dict[str, Dict[str, str]]:
     return {
-        "Int64": {"style": "bold cyan", "justify": "right"},
-        "Int32": {"style": "bold cyan", "justify": "right"},
-        "UInt32": {"style": "bold cyan", "justify": "right"},
+        "Int64": {"style": "cyan", "justify": "right"},
+        "Int32": {"style": "cyan", "justify": "right"},
+        "UInt32": {"style": "cyan", "justify": "right"},
         "Float64": {"style": "magenta", "justify": "right"},
         "Float32": {"style": "magenta", "justify": "right"},
         "Utf8": {"style": "green", "justify": "left"},
@@ -103,6 +102,20 @@ def build_table(df: pl.DataFrame, start: int, end: int, box_style=box.SIMPLE) ->
     return table
 
 
+def build_status_bar(filename: str, start: int, end: int, total: int) -> Text:
+    term_width = console.size.width
+    left = filename if filename else "stdout"
+    right = f"rows {start + 1}-{end} / {total}"
+    padding = term_width - len(left) - len(right)
+    if padding < 0:
+        padding = 0
+    text = Text()
+    text.append(left, style="bold white on blue")
+    text.append(" " * padding, style="on blue")
+    text.append(right, style="bold white on blue")
+    return text
+
+
 def build_display(
     df: pl.DataFrame,
     filename: str,
@@ -126,6 +139,7 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
     Navigation:
       Up/Down: move 1 row
       PageUp/PageDown, Enter, or Ctrl+B/Ctrl+F: move one page
+      Home/End: go to start/end
       q: quit
     """
     height = console.size.height
@@ -135,25 +149,15 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
     # - Status bar takes 1 line
     # So data rows = total height - 4
     # This should give us ~50 rows in a standard 54-line terminal
-    usable_rows = max(height - 4, 1)
-    total_rows = df.height
-
-    # If fits in screen, just render once (non-interactive)
-    if total_rows <= usable_rows:
-        display = build_display(df, filename, 0, total_rows, total_rows, box_style)
-        console.print(display, end="")
-        return
-
+    page = max(height - 4, 1)
+    total = df.height
     start = 0
-    page = usable_rows
 
     # Use Rich Live for smooth, flicker-free updates
     # screen=True enables full screen mode with proper clearing
     # auto_refresh=False to manually control refresh timing
     with Live(
-        build_display(
-            df, filename, start, min(start + page, total_rows), total_rows, box_style
-        ),
+        build_display(df, filename, start, min(start + page, total), total, box_style),
         console=console,
         screen=True,
         auto_refresh=False,
@@ -170,14 +174,14 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
             elif key.char == "\r" or key.code == 13:
                 new_start = start + page
                 # Don't go past the end; last page may show fewer rows
-                if new_start < total_rows:
+                if new_start < total:
                     start = new_start
                 # If at the end, exit
-                elif new_start >= total_rows:
+                elif new_start >= total:
                     break
             # Ctrl+F (forward page) ord=6
             elif key.code == 6:
-                start = min(start + page, total_rows - 1)
+                start = min(start + page, total - 1)
             # Ctrl+B (back page) ord=2
             elif key.code == 2:
                 start = max(start - page, 0)
@@ -187,7 +191,7 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
             # End key (go to last page) - ESC[F or ESC[4~
             elif key.char in ("\x1b[F", "\x1b[4~"):
                 # Go to last page showing remaining rows
-                start = max(0, total_rows - page)
+                start = max(0, total - page)
             # Arrow up/down and other escape sequences
             elif key.char.startswith("\x1b["):
                 if len(key.char) >= 3:
@@ -195,34 +199,18 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
                     if code == "A":  # Up arrow
                         start = max(start - 1, 0)
                     elif code == "B":  # Down arrow
-                        start = min(start + 1, total_rows - 1)
+                        start = min(start + 1, total - 1)
                 # Check full sequence for PageUp/PageDown
                 if key.char == "\x1b[5~":  # PageUp
                     start = max(start - page, 0)
                 elif key.char == "\x1b[6~":  # PageDown
-                    start = min(start + page, total_rows - 1)
+                    start = min(start + page, total - 1)
 
             # Only update display if position changed
             if start != old_start:
-                end = min(start + page, total_rows)
-                live.update(
-                    build_display(df, filename, start, end, total_rows, box_style)
-                )
+                end = min(start + page, total)
+                live.update(build_display(df, filename, start, end, total, box_style))
                 live.refresh()
-
-
-def build_status_bar(filename: str, start: int, end: int, total: int) -> Text:
-    term_width = shutil.get_terminal_size((80, 24)).columns
-    left = filename if filename else "stdout"
-    right = f"rows {start + 1}-{end} / {total}"
-    padding = term_width - len(left) - len(right)
-    if padding < 0:
-        padding = 0
-    text = Text()
-    text.append(left, style="bold white on blue")
-    text.append(" " * padding, style="on blue")
-    text.append(right, style="bold white on blue")
-    return text
 
 
 def main():
