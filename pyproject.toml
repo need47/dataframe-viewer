@@ -1,0 +1,14 @@
+[project]
+name = "example"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "polars>=1.34.0",
+]
+
+[dependency-groups]
+dev = [
+    "rich>=14.2.0",
+]
