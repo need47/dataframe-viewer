@@ -3,6 +3,7 @@ import shutil
 import termios
 import tty
 import os
+import argparse
 from dataclasses import dataclass
 from typing import Dict
 from io import StringIO
@@ -10,7 +11,7 @@ from io import StringIO
 import polars as pl
 from rich.console import Console
 from rich.table import Table
-from rich.box import SIMPLE
+from rich import box
 from rich.text import Text
 from rich.live import Live
 from rich.layout import Layout
@@ -66,24 +67,28 @@ def dtype_style_map() -> Dict[str, Dict[str, str]]:
     }
 
 
-def build_table(df: pl.DataFrame, start: int, end: int) -> Table:
+def build_table(df: pl.DataFrame, start: int, end: int, box_style=box.SIMPLE) -> Table:
     styles = dtype_style_map()
+
     # Explicitly enable headers; some environments (piped / non-TTY via uv run | head) may
     # suppress them if Rich detects non-interactive output. Setting show_header=True
     # and a header_style makes headers reliably visible.
     # padding=(0,1,0,1) = (top, right, bottom, left) removes vertical padding
-    # SIMPLE box style for minimal borders
     table = Table(
-        box=SIMPLE,
+        box=box_style,
         expand=True,
         padding=(0, 1, 0, 1),
     )
+
+    # Add columns with styles based on dtype
     for col, dtype in zip(df.columns, df.dtypes):
         dtype_name = str(dtype)
         meta = styles.get(dtype_name, {"style": "green", "justify": "left"})
         table.add_column(
             col, style=meta["style"], justify=meta["justify"], overflow="fold"
         )
+
+    # Add rows for the current slice
     for row in df.slice(start, end - start).rows():
         rendered = []
         for val, dtype in zip(row, df.dtypes):
@@ -98,17 +103,24 @@ def build_table(df: pl.DataFrame, start: int, end: int) -> Table:
     return table
 
 
-def build_display(df: pl.DataFrame, filename: str, start: int, end: int, total: int):
+def build_display(
+    df: pl.DataFrame,
+    filename: str,
+    start: int,
+    end: int,
+    total: int,
+    box_style=box.SIMPLE,
+):
     """Build the complete display with table and status bar."""
     layout = Layout()
     layout.split_column(
-        Layout(build_table(df, start, end), name="main"),
+        Layout(build_table(df, start, end, box_style), name="main"),
         Layout(build_status_bar(filename, start, end, total), name="footer", size=1),
     )
     return layout
 
 
-def display_dataframe(df: pl.DataFrame, filename: str):
+def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
     """Interactive dataframe viewer with keyboard navigation.
 
     Navigation:
@@ -116,9 +128,10 @@ def display_dataframe(df: pl.DataFrame, filename: str):
       PageUp/PageDown, Enter, or Ctrl+B/Ctrl+F: move one page
       q: quit
     """
-    height = shutil.get_terminal_size((80, 24)).lines
+    height = console.size.height
+
     # Account for:
-    # - Table header takes 3 lines (top border + header text + separator with ROUNDED)
+    # - Table header takes 3 lines (top border + header text + separator with SIMPLE)
     # - Status bar takes 1 line
     # So data rows = total height - 4
     # This should give us ~50 rows in a standard 54-line terminal
@@ -127,10 +140,8 @@ def display_dataframe(df: pl.DataFrame, filename: str):
 
     # If fits in screen, just render once (non-interactive)
     if total_rows <= usable_rows:
-        table = build_table(df, 0, total_rows)
-        console.print(table, end="")
-        status = build_status_bar(filename, 0, total_rows, total_rows)
-        console.print(status, end="")
+        display = build_display(df, filename, 0, total_rows, total_rows, box_style)
+        console.print(display, end="")
         return
 
     start = 0
@@ -140,7 +151,9 @@ def display_dataframe(df: pl.DataFrame, filename: str):
     # screen=True enables full screen mode with proper clearing
     # auto_refresh=False to manually control refresh timing
     with Live(
-        build_display(df, filename, start, min(start + page, total_rows), total_rows),
+        build_display(
+            df, filename, start, min(start + page, total_rows), total_rows, box_style
+        ),
         console=console,
         screen=True,
         auto_refresh=False,
@@ -192,7 +205,9 @@ def display_dataframe(df: pl.DataFrame, filename: str):
             # Only update display if position changed
             if start != old_start:
                 end = min(start + page, total_rows)
-                live.update(build_display(df, filename, start, end, total_rows))
+                live.update(
+                    build_display(df, filename, start, end, total_rows, box_style)
+                )
                 live.refresh()
 
 
@@ -211,23 +226,51 @@ def build_status_bar(filename: str, start: int, end: int, total: int) -> Text:
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Interactive CSV viewer for the terminal",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Examples:\n"
+        "  python main.py data.csv\n"
+        "  python main.py data.csv --box rounded\n"
+        "  cat data.csv | python main.py --box heavy\n"
+        "  python main.py data.csv --box minimal_double_head\n",
+    )
+    parser.add_argument("file", nargs="?", help="CSV file to view (or read from stdin)")
+    parser.add_argument(
+        "--box",
+        default="simple",
+        help="Box style name (e.g., simple, rounded, minimal, heavy, double, ascii, minimal_double_head, etc.)",
+    )
+
+    args = parser.parse_args()
+
+    # Convert user input to uppercase and get box style from rich.box module
+    box_style_name = args.box.upper()
+    try:
+        box_style = getattr(box, box_style_name)
+    except AttributeError:
+        console.print(f"Error: Unknown box style '{args.box}'")
+        console.print(
+            f"Available styles: {', '.join([name.lower() for name in dir(box) if name.isupper()])}"
+        )
+        sys.exit(1)
+
     # Check if reading from stdin (pipe or redirect)
     if not sys.stdin.isatty():
         # Read CSV from stdin into memory first (stdin is not seekable)
         stdin_data = sys.stdin.read()
         df = pl.read_csv(StringIO(stdin_data))
-        display_dataframe(df, "stdin")
-    elif len(sys.argv) == 2:
+        display_dataframe(df, "stdin", box_style)
+    elif args.file:
         # Read from file
-        filename = sys.argv[1]
+        filename = args.file
         if not os.path.exists(filename):
             console.print(f"File not found: {filename}")
             sys.exit(1)
         df = pl.read_csv(filename)
-        display_dataframe(df, filename)
+        display_dataframe(df, filename, box_style)
     else:
-        console.print("Usage: python main.py <csv_file>")
-        console.print("   or: cat file.csv | python main.py")
+        parser.print_help()
         sys.exit(1)
 
 
