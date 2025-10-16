@@ -202,11 +202,12 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
     height = console.size.height
 
     # Account for:
-    # - Table header takes 3 lines (top border + header text + separator with SIMPLE)
+    # - Table header takes 3 lines (top border + header text + separator line) if it is boxed else 1 line
     # - Status bar takes 1 line
-    # So data rows = total height - 4
+    # So data rows = total height - (header_height + 1)
     # This should give us ~50 rows in a standard 54-line terminal
-    page = max(height - 4, 1)
+    header_height = 3 if box_style else 1
+    page = max(height - (header_height + 1), 1)
     total = df.height
     start = 0
 
@@ -258,11 +259,14 @@ def main():
     try:
         box_style = getattr(box, box_style_name)
     except AttributeError:
-        console.print(f"Error: Unknown box style '{args.box}'")
-        console.print(
-            f"Available styles: {', '.join([name.lower() for name in dir(box) if name.isupper()])}"
-        )
-        sys.exit(1)
+        if box_style_name != "NONE":
+            console.print(f"Error: Unknown box style '{args.box}'")
+            console.print(
+                f"Available styles: {', '.join([name.lower() for name in dir(box) if name.isupper()])}"
+            )
+            sys.exit(1)
+        # explicitly disable box if user specified NONE
+        box_style = None
 
     # Check if reading from stdin (pipe or redirect)
     if not sys.stdin.isatty():
