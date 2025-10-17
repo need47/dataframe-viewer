@@ -1,19 +1,19 @@
+import argparse
+import os
 import sys
 import termios
 import tty
-import os
-import argparse
 from dataclasses import dataclass
-from typing import Dict
 from io import StringIO
+from typing import Dict
 
 import polars as pl
-from rich.console import Console
-from rich.table import Table
 from rich import box
-from rich.text import Text
-from rich.live import Live
+from rich.console import Console
 from rich.layout import Layout
+from rich.live import Live
+from rich.table import Table
+from rich.text import Text
 
 console = Console()
 
@@ -64,14 +64,14 @@ def handle_keypress(start: int, page: int, total: int) -> int:
     if key.char == "q":
         return -1
 
-    # Enter key (PageDown) ord=13 or '\r'
+    # Enter key ('\r') ord=13
     elif key.char == "\r" or key.code == 13:
         new_start = start + page
         # Don't go past the end; last page may show fewer rows
         if new_start < total:
             return new_start
         # If at the end, exit
-        elif new_start >= total:
+        else:
             return -1
 
     # Ctrl+F (forward page) ord=6
@@ -91,21 +91,23 @@ def handle_keypress(start: int, page: int, total: int) -> int:
         # Go to last page showing remaining rows
         return max(0, total - page)
 
-    # Arrow up/down and other escape sequences
-    elif key.char.startswith("\x1b["):
-        if len(key.char) >= 3:
-            code = key.char[2]
-            if code == "A":  # Up arrow
-                return max(start - 1, 0)
-            elif code == "B":  # Down arrow
-                return min(start + 1, total - 1)
-        # Check full sequence for PageUp/PageDown
-        if key.char == "\x1b[5~":  # PageUp
-            return max(start - page, 0)
-        elif key.char == "\x1b[6~":  # PageDown
-            return min(start + page, total - 1)
+    # Up arrow: ESC[A
+    elif key.char == "\x1b[A":
+        return max(start - 1, 0)
 
-    # No change
+    # Down arrow: ESC[B
+    elif key.char == "\x1b[B":
+        return min(start + 1, total - 1)
+
+    # PageUp: ESC[5~
+    elif key.char == "\x1b[5~":
+        return max(start - page, 0)
+
+    # PageDown: ESC[6~
+    elif key.char == "\x1b[6~":
+        return min(start + page, total - 1)
+
+    # other keys
     return start
 
 
@@ -131,8 +133,7 @@ def build_table(df: pl.DataFrame, start: int, end: int, box_style=box.SIMPLE) ->
 
     # Add columns with styles based on dtype
     for col, dtype in zip(df.columns, df.dtypes):
-        dtype_name = str(dtype)
-        meta = styles.get(dtype_name, {"style": "green", "justify": "left"})
+        meta = styles.get(str(dtype), {"style": "green", "justify": "left"})
         table.add_column(
             col, style=meta["style"], justify=meta["justify"], overflow="fold"
         )
@@ -152,9 +153,9 @@ def build_table(df: pl.DataFrame, start: int, end: int, box_style=box.SIMPLE) ->
     return table
 
 
-def build_status_bar(filename: str, start: int, end: int, total: int) -> Text:
+def build_status(filename: str, start: int, end: int, total: int) -> Text:
     term_width = console.size.width
-    left = filename if filename else "stdout"
+    left = filename if filename else "stdin"
     right = f"rows {start + 1}-{end} / {total}"
     padding = term_width - len(left) - len(right)
     if padding < 0:
@@ -178,7 +179,7 @@ def build_display(
     layout = Layout()
     layout.split_column(
         Layout(build_table(df, start, end, box_style), name="main"),
-        Layout(build_status_bar(filename, start, end, total), name="footer", size=1),
+        Layout(build_status(filename, start, end, total), name="footer", size=1),
     )
     return layout
 
@@ -192,7 +193,7 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
       Home/End: go to start/end
       q: quit
     """
-    height = console.size.height
+    term_height = console.size.height
 
     # Account for:
     # - Table header takes 3 lines (top border + header text + separator line) if it is boxed else 1 line
@@ -200,7 +201,7 @@ def display_dataframe(df: pl.DataFrame, filename: str, box_style=box.SIMPLE):
     # So data rows = total height - (header_height + status_height)
     header_height = 3 if box_style else 1
     status_height = 1
-    page = max(height - (header_height + status_height), 1)
+    page = max(term_height - (header_height + status_height), 1)
     total = df.height
     start = 0
 
