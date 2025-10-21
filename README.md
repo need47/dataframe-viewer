@@ -1,6 +1,8 @@
 # DataFrame Viewer
 
-A fast, interactive terminal-based CSV viewer built with Python, Polars, and Rich. Inspired by VisiData, this tool provides smooth keyboard navigation and a clean interface for exploring CSV data directly in your terminal.
+A fast, interactive terminal-based CSV viewer built with Python, Polars, and Textual. Inspired by VisiData, this tool provides smooth keyboard navigation and a clean interface for exploring CSV data directly in your terminal.
+
+> **Note:** This is the Textual version (simpler, ~100 lines). For the Rich library version with custom box styles, see `main_rich.py` and [COMPARISON.md](COMPARISON.md).
 
 ## Features
 
@@ -38,13 +40,17 @@ python main.py <csv_file>
 # View a CSV file
 python main.py pokemon.csv
 
-# Choose a different box style
-python main.py pokemon.csv --box rounded
-python main.py pokemon.csv --box heavy
-python main.py pokemon.csv --box minimal
-
 # Or with uv
 uv run python main.py pokemon.csv
+```
+
+### Using the Rich version (with box styles)
+
+```bash
+# Rich version with custom box styles
+python main_rich.py pokemon.csv --box rounded
+python main_rich.py pokemon.csv --box heavy
+python main_rich.py pokemon.csv --box minimal
 ```
 
 ### Reading from stdin
@@ -65,64 +71,29 @@ grep "Fire" pokemon.csv | python main.py
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Move up/down one row |
-| `Enter` | Page down (next page) |
-| `PageDown` / `Ctrl+F` | Next page |
-| `PageUp` / `Ctrl+B` | Previous page |
-| `Home` | Jump to first page |
-| `End` | Jump to last page |
+| `PageDown` | Next page |
+| `PageUp` | Previous page |
+| `Home` | Jump to first row |
+| `End` | Jump to last row |
 | `q` | Quit viewer |
 
-**Note:** Pressing `Enter` on the last page will exit the viewer.
-
 ## Features in Detail
-
-### Box Styles
-
-Customize the appearance of table borders with the `--box` option. The viewer accepts any box style name from the Rich library (case-insensitive):
-
-**Popular styles:**
-- **simple** (default): Minimal single-line borders
-- **rounded**: Smooth rounded corners
-- **minimal**: Very subtle borders
-- **heavy**: Bold, thick borders
-- **double**: Double-line borders
-- **square**: Sharp square corners
-- **ascii**: ASCII-only characters (for maximum compatibility)
-- **minimal_double_head**: Minimal with double-line header
-- **heavy_head**: Heavy border with emphasized header
-
-Examples:
-```bash
-python main.py data.csv --box rounded
-python main.py data.csv --box minimal_double_head
-python main.py data.csv --box heavy_edge
-```
-
-To see all available box styles, run with an invalid style name:
-```bash
-python main.py data.csv --box help
-```
 
 ### Color-Coded Columns
 
 Columns are automatically styled based on their data type:
-- **Integers** (Int64, Int32, UInt32): Bold cyan, right-aligned
-- **Floats** (Float64, Float32): Magenta, right-aligned
-- **Strings** (Utf8): Green, left-aligned
-- **Booleans**: Yellow, center-aligned
-- **Dates/Datetime**: Blue, center-aligned
+- **Integers** (Int64, Int32, UInt32): Cyan
+- **Floats** (Float64, Float32): Magenta
+- **Strings** (Utf8): Green
+- **Booleans**: Yellow
+- **Dates/Datetime**: Blue
 
-### Status Bar
+### Automatic Scrolling
 
-The bottom status bar shows:
-- **Left**: Filename or "stdin"
-- **Right**: Current row range and total rows (e.g., "rows 1-50 / 163")
-
-### Smart Pagination
-
-- Automatically calculates optimal rows per page based on terminal height
-- Last page may show fewer rows to avoid overlap
-- Smooth navigation with no duplicate rows between pages
+- Built-in scrolling with DataTable widget
+- Smooth navigation with arrow keys
+- Page up/down for quick navigation
+- Home/End keys to jump to first/last row
 
 ## Examples
 
