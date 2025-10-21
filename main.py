@@ -8,6 +8,15 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable
 
+STYLES = {
+    "Int64": {"style": "cyan", "justify": "right"},
+    "Float64": {"style": "magenta", "justify": "right"},
+    "String": {"style": "green", "justify": "left"},
+    "Boolean": {"style": "yellow", "justify": "center"},
+    "Date": {"style": "blue", "justify": "center"},
+    "Datetime": {"style": "blue", "justify": "center"},
+}
+
 
 class DataFrameViewer(App):
     """A Textual app to view dataframe interactively."""
@@ -16,11 +25,13 @@ class DataFrameViewer(App):
         ("q", "quit", "Quit"),
         ("pageup", "page_up", "Page Up"),
         ("pagedown", "page_down", "Page Down"),
+        ("t", "toggle_row_labels", "Toggle Row Labels"),
     ]
 
     def __init__(self, df: pl.DataFrame):
         super().__init__()
         self.df = df
+        self.show_row_labels = False  # Row labels hidden by default
 
         # Reopen stdin to /dev/tty for proper terminal interaction
         if not sys.stdin.isatty():
@@ -33,31 +44,48 @@ class DataFrameViewer(App):
 
     def on_mount(self) -> None:
         """Set up the DataTable when app starts."""
-        table = self.query_one(DataTable)
-        styles = {
-            "Int64": "cyan",
-            "Int32": "cyan",
-            "UInt32": "cyan",
-            "Float64": "magenta",
-            "Float32": "magenta",
-            "Utf8": "green",
-            "Boolean": "yellow",
-            "Date": "blue",
-            "Datetime": "blue",
-        }
+        self._populate_table()
 
-        # Add columns
-        columns = self.df.columns
-        table.add_columns(*columns)
+    def on_key(self, event) -> None:
+        """Handle key events."""
+        table = self.query_one(DataTable)
+
+        if event.key in ("home", "g"):
+            table.move_cursor(row=0)
+        elif event.key in ("end", "G"):
+            table.move_cursor(row=table.row_count - 1)
+
+    def action_toggle_row_labels(self) -> None:
+        """Toggle row labels visibility."""
+        self.show_row_labels = not self.show_row_labels
+        self._populate_table()
+
+    def _populate_table(self) -> None:
+        """Populate or repopulate the table with current settings."""
+        table = self.query_one(DataTable)
+
+        # Clear existing table
+        table.clear(columns=True)
+
+        # Add columns with justified headers based on dtype
+        for col, dtype in zip(self.df.columns, self.df.dtypes):
+            style_config = STYLES.get(str(dtype), {"style": "green", "justify": "left"})
+            justify = style_config["justify"]
+            # Create column header with justification
+            table.add_column(Text(col, justify=justify))
 
         # Add rows with colored cells based on dtype
-        for row in self.df.rows():
+        for row_idx, row in enumerate(self.df.rows()):
             # Convert values to strings, handling None
             formatted_row = []
 
             for val, dtype in zip(row, self.df.dtypes):
-                # Get the color for this data type
-                color = styles.get(str(dtype), "green")
+                # Get the style config for this data type
+                style_config = STYLES.get(
+                    str(dtype), {"style": "green", "justify": "left"}
+                )
+                color = style_config["style"]
+                justify = style_config["justify"]
 
                 # Format the value
                 if val is None:
@@ -67,23 +95,16 @@ class DataFrameViewer(App):
                 else:
                     text_val = str(val)
 
-                # Create a styled Text object
-                formatted_row.append(Text(text_val, style=color))
+                # Create a styled Text object with justification
+                formatted_row.append(Text(text_val, style=color, justify=justify))
 
-            table.add_row(*formatted_row)
+            # Add row with label (1-based index) if enabled
+            label = str(row_idx + 1) if self.show_row_labels else None
+            table.add_row(*formatted_row, label=label)
 
         # Enable cursor and focus
         table.cursor_type = "row"
         table.focus()
-
-    def on_key(self, event) -> None:
-        """Handle key events."""
-        table = self.query_one(DataTable)
-
-        if event.key == "home":
-            table.move_cursor(row=0)
-        elif event.key == "end":
-            table.move_cursor(row=table.row_count - 1)
 
 
 def main():
