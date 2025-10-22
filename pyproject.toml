@@ -1,5 +1,5 @@
 [project]
-name = "example"
+name = "dataframe-viewer"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -11,4 +11,6 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = []
+dev = [
+    "textual-dev>=1.8.0",
+]
