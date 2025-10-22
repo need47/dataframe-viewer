@@ -73,15 +73,17 @@ class DataFrameViewer(App):
                 input=cell_str,
                 text=True,
             )
-            self.notify(f"Copied: {cell_str[:50]}")
+            msg = f"Copied: {cell_str[:50]}"
+            self.notify(msg)
         except FileNotFoundError:
-            self.notify(f"Copied (clipboard tool not available): {cell_str[:50]}")
+            msg = f"Copied (clipboard tool not available): {cell_str[:50]}"
+            self.notify(msg)
 
     def on_mount(self) -> None:
         """Set up the DataTable when app starts."""
         table = self.query_one(DataTable)
         self._setup_table_columns(table)
-        self._load_n_rows(table, INITIAL_BATCH_SIZE)
+        self._load_rows(table, INITIAL_BATCH_SIZE)
         # Hide labels by default after initial load
         self.call_later(lambda: setattr(table, "show_row_labels", False))
 
@@ -89,43 +91,21 @@ class DataFrameViewer(App):
         """Handle key events."""
         table = self.query_one(DataTable)
 
-        if event.key in ("home", "g"):
+        if event.key == "g":
             table.move_cursor(row=0)
-        elif event.key in ("end", "G"):
+        elif event.key == "G":
             # Load all remaining rows before jumping to end
             remaining = self.total_rows - self.loaded_rows
             if remaining > 0:
-                self._load_n_rows(table, remaining)
+                self._load_rows(table, remaining)
             table.move_cursor(row=table.row_count - 1)
-
-    def on_data_table_row_highlighted(self, event) -> None:
-        """Load more rows when user scrolls near the bottom."""
-        self._check_and_load_more()
+        elif event.key in ("pagedown", "down"):
+            # Let the table handle the navigation first
+            self._check_and_load_more()
 
     def on_mouse_scroll_down(self, event) -> None:
         """Load more rows when scrolling down with mouse."""
         self._check_and_load_more()
-
-    def _check_and_load_more(self) -> None:
-        """Check if we need to load more rows and load them."""
-        table = self.query_one(DataTable)
-
-        # Check both cursor position and scroll position
-        # scroll_y is the vertical scroll offset
-        # Approximate visible rows (minus header)
-        visible_row_count = table.size.height - table.header_height
-        scroll_offset = table.scroll_y
-
-        # Estimate which row is at the bottom of the viewport
-        # Each row is roughly 1 line height
-        bottom_visible_row = scroll_offset + visible_row_count
-
-        # If we're within 10 rows of the bottom of loaded data and haven't loaded all rows yet
-        if (
-            bottom_visible_row >= table.row_count - 10
-            or table.cursor_row >= table.row_count - 10
-        ) and self.loaded_rows < self.total_rows:
-            self._load_n_rows(table, BATCH_SIZE)
 
     def _setup_table_columns(self, table: DataTable) -> None:
         """Clear table and setup columns."""
@@ -140,7 +120,21 @@ class DataFrameViewer(App):
         table.cursor_type = "cell"
         table.focus()
 
-    def _load_n_rows(self, table: DataTable, count: int) -> None:
+    def _check_and_load_more(self) -> None:
+        """Check if we need to load more rows and load them."""
+        # If we've loaded everything, no need to check
+        if self.loaded_rows >= self.total_rows:
+            return
+
+        table = self.query_one(DataTable)
+        visible_row_count = table.size.height - table.header_height
+        bottom_visible_row = table.scroll_y + visible_row_count
+
+        # If visible area is close to the end of loaded rows, load more
+        if bottom_visible_row >= self.loaded_rows - 10:
+            self._load_rows(table, BATCH_SIZE)
+
+    def _load_rows(self, table: DataTable, count: int) -> None:
         """Load a batch of rows into the table."""
         start_idx = self.loaded_rows
         if start_idx >= self.total_rows:
@@ -212,7 +206,8 @@ def main():
         sys.exit(1)
 
     # Run the app
-    DataFrameViewer(df).run()
+    app = DataFrameViewer(df)
+    app.run()
 
 
 if __name__ == "__main__":
