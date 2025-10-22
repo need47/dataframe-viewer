@@ -17,21 +17,25 @@ STYLES = {
     "Datetime": {"style": "blue", "justify": "center"},
 }
 
+# Pagination settings
+INITIAL_BATCH_SIZE = 100  # Load this many rows initially
+BATCH_SIZE = 50  # Load this many rows when scrolling
+
 
 class DataFrameViewer(App):
     """A Textual app to view dataframe interactively."""
 
     BINDINGS = [
         ("q", "quit", "Quit"),
-        ("pageup", "page_up", "Page Up"),
-        ("pagedown", "page_down", "Page Down"),
         ("t", "toggle_row_labels", "Toggle Row Labels"),
+        ("c", "copy_row", "Copy Row"),
     ]
 
     def __init__(self, df: pl.DataFrame):
         super().__init__()
         self.df = df
-        self.show_row_labels = False  # Row labels hidden by default
+        self.loaded_rows = 0  # Track how many rows are currently loaded
+        self.total_rows = len(df)
 
         # Reopen stdin to /dev/tty for proper terminal interaction
         if not sys.stdin.isatty():
@@ -40,11 +44,46 @@ class DataFrameViewer(App):
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
-        yield DataTable()
+        yield DataTable(zebra_stripes=True)
+
+    def action_toggle_row_labels(self) -> None:
+        """Toggle row labels visibility using CSS property."""
+        table = self.query_one(DataTable)
+        table.show_row_labels = not table.show_row_labels
+
+    def action_copy_row(self) -> None:
+        """Copy the current cell to clipboard."""
+        import subprocess
+
+        table = self.query_one(DataTable)
+        row_idx = table.cursor_row
+        col_idx = table.cursor_column
+
+        # Get the cell value
+        cell_str = str(self.df.item(row_idx, col_idx))
+
+        # Copy to clipboard using xclip or pbcopy (macOS)
+        try:
+            subprocess.run(
+                [
+                    "pbcopy" if sys.platform == "darwin" else "xclip",
+                    "-selection",
+                    "clipboard",
+                ],
+                input=cell_str,
+                text=True,
+            )
+            self.notify(f"Copied: {cell_str[:50]}")
+        except FileNotFoundError:
+            self.notify(f"Copied (clipboard tool not available): {cell_str[:50]}")
 
     def on_mount(self) -> None:
         """Set up the DataTable when app starts."""
-        self._populate_table()
+        table = self.query_one(DataTable)
+        self._setup_table_columns(table)
+        self._load_n_rows(table, INITIAL_BATCH_SIZE)
+        # Hide labels by default after initial load
+        self.call_later(lambda: setattr(table, "show_row_labels", False))
 
     def on_key(self, event) -> None:
         """Handle key events."""
@@ -53,58 +92,95 @@ class DataFrameViewer(App):
         if event.key in ("home", "g"):
             table.move_cursor(row=0)
         elif event.key in ("end", "G"):
+            # Load all remaining rows before jumping to end
+            remaining = self.total_rows - self.loaded_rows
+            if remaining > 0:
+                self._load_n_rows(table, remaining)
             table.move_cursor(row=table.row_count - 1)
 
-    def action_toggle_row_labels(self) -> None:
-        """Toggle row labels visibility."""
-        self.show_row_labels = not self.show_row_labels
-        self._populate_table()
+    def on_data_table_row_highlighted(self, event) -> None:
+        """Load more rows when user scrolls near the bottom."""
+        self._check_and_load_more()
 
-    def _populate_table(self) -> None:
-        """Populate or repopulate the table with current settings."""
+    def on_mouse_scroll_down(self, event) -> None:
+        """Load more rows when scrolling down with mouse."""
+        self._check_and_load_more()
+
+    def _check_and_load_more(self) -> None:
+        """Check if we need to load more rows and load them."""
         table = self.query_one(DataTable)
 
-        # Clear existing table
-        table.clear(columns=True)
+        # Check both cursor position and scroll position
+        # scroll_y is the vertical scroll offset
+        # Approximate visible rows (minus header)
+        visible_row_count = table.size.height - table.header_height
+        scroll_offset = table.scroll_y
 
-        # Add columns with justified headers based on dtype
+        # Estimate which row is at the bottom of the viewport
+        # Each row is roughly 1 line height
+        bottom_visible_row = scroll_offset + visible_row_count
+
+        # If we're within 10 rows of the bottom of loaded data and haven't loaded all rows yet
+        if (
+            bottom_visible_row >= table.row_count - 10
+            or table.cursor_row >= table.row_count - 10
+        ) and self.loaded_rows < self.total_rows:
+            self._load_n_rows(table, BATCH_SIZE)
+
+    def _setup_table_columns(self, table: DataTable) -> None:
+        """Clear table and setup columns."""
+        table.clear(columns=True)
+        self.loaded_rows = 0
+
+        # Add columns with justified headers
         for col, dtype in zip(self.df.columns, self.df.dtypes):
             style_config = STYLES.get(str(dtype), {"style": "green", "justify": "left"})
-            justify = style_config["justify"]
-            # Create column header with justification
-            table.add_column(Text(col, justify=justify))
+            table.add_column(Text(col, justify=style_config["justify"]))
 
-        # Add rows with colored cells based on dtype
-        for row_idx, row in enumerate(self.df.rows()):
-            # Convert values to strings, handling None
-            formatted_row = []
-
-            for val, dtype in zip(row, self.df.dtypes):
-                # Get the style config for this data type
-                style_config = STYLES.get(
-                    str(dtype), {"style": "green", "justify": "left"}
-                )
-                color = style_config["style"]
-                justify = style_config["justify"]
-
-                # Format the value
-                if val is None:
-                    text_val = "-"
-                elif str(dtype).startswith("Float"):
-                    text_val = f"{val:.4g}"
-                else:
-                    text_val = str(val)
-
-                # Create a styled Text object with justification
-                formatted_row.append(Text(text_val, style=color, justify=justify))
-
-            # Add row with label (1-based index) if enabled
-            label = str(row_idx + 1) if self.show_row_labels else None
-            table.add_row(*formatted_row, label=label)
-
-        # Enable cursor and focus
-        table.cursor_type = "row"
+        table.cursor_type = "cell"
         table.focus()
+
+    def _load_n_rows(self, table: DataTable, count: int) -> None:
+        """Load a batch of rows into the table."""
+        start_idx = self.loaded_rows
+        if start_idx >= self.total_rows:
+            return
+
+        end_idx = min(start_idx + count, self.total_rows)
+        df_slice = self.df.slice(start_idx, end_idx - start_idx)
+
+        for offset, row in enumerate(df_slice.rows()):
+            row_idx = start_idx + offset
+            formatted_row = self._format_row(row)
+            # Always add labels so they can be shown/hidden via CSS
+            table.add_row(*formatted_row, label=str(row_idx + 1))
+
+        self.loaded_rows = end_idx
+
+    def _format_row(self, row) -> list[Text]:
+        """Format a single row with proper styling and justification."""
+        formatted_row = []
+
+        for val, dtype in zip(row, self.df.dtypes):
+            style_config = STYLES.get(str(dtype), {"style": "green", "justify": "left"})
+
+            # Format the value
+            if val is None:
+                text_val = "-"
+            elif str(dtype).startswith("Float"):
+                text_val = f"{val:.4g}"
+            else:
+                text_val = str(val)
+
+            formatted_row.append(
+                Text(
+                    text_val,
+                    style=style_config["style"],
+                    justify=style_config["justify"],
+                )
+            )
+
+        return formatted_row
 
 
 def main():
