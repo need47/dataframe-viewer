@@ -17,10 +17,6 @@ STYLES = {
     "Datetime": {"style": "blue", "justify": "center"},
 }
 
-# Pagination settings
-INITIAL_BATCH_SIZE = 100  # Load this many rows initially
-BATCH_SIZE = 50  # Load this many rows when scrolling
-
 
 class DataFrameViewer(App):
     """A Textual app to view dataframe interactively."""
@@ -34,9 +30,6 @@ class DataFrameViewer(App):
     def __init__(self, df: pl.DataFrame):
         super().__init__()
         self.df = df
-        self.loaded_rows = 0  # Track how many rows are currently loaded
-        self.total_rows = len(df)
-        self.table = None  # Set later in on_mount
 
         # Reopen stdin to /dev/tty for proper terminal interaction
         if not sys.stdin.isatty():
@@ -49,14 +42,16 @@ class DataFrameViewer(App):
 
     def action_toggle_row_labels(self) -> None:
         """Toggle row labels visibility using CSS property."""
-        self.table.show_row_labels = not self.table.show_row_labels
+        table = self.query_one(DataTable)
+        table.show_row_labels = not table.show_row_labels
 
     def action_copy_cell(self) -> None:
         """Copy the current cell to clipboard."""
         import subprocess
 
-        row_idx = self.table.cursor_row
-        col_idx = self.table.cursor_column
+        table = self.query_one(DataTable)
+        row_idx = table.cursor_row
+        col_idx = table.cursor_column
 
         # Get the cell value
         cell_str = str(self.df.item(row_idx, col_idx))
@@ -80,72 +75,40 @@ class DataFrameViewer(App):
 
     def on_mount(self) -> None:
         """Set up the DataTable when app starts."""
-        self.table = self.query_one(DataTable)
-        self._setup_table_columns()
-        self._load_rows(INITIAL_BATCH_SIZE)
+        table = self.query_one(DataTable)
+        self._setup_table_columns(table)
+        # Load all rows eagerly
+        self._load_rows(table, len(self.df))
         # Hide labels by default after initial load
-        self.call_later(lambda: setattr(self.table, "show_row_labels", False))
+        self.call_later(lambda: setattr(table, "show_row_labels", False))
 
     def on_key(self, event) -> None:
         """Handle key events."""
-        if event.key == "g":
-            self.table.move_cursor(row=0)
-        elif event.key == "G":
-            # Load all remaining rows before jumping to end
-            remaining = self.total_rows - self.loaded_rows
-            if remaining > 0:
-                self._load_rows(remaining)
-            self.table.move_cursor(row=self.table.row_count - 1)
-        elif event.key in ("pagedown", "down"):
-            # Let the table handle the navigation first
-            self._check_and_load_more()
+        table = self.query_one(DataTable)
 
-    def _setup_table_columns(self) -> None:
+        if event.key == "g":
+            table.move_cursor(row=0)
+        elif event.key == "G":
+            table.move_cursor(row=table.row_count - 1)
+
+    def _setup_table_columns(self, table: DataTable) -> None:
         """Clear table and setup columns."""
-        self.table.clear(columns=True)
-        self.loaded_rows = 0
+        table.clear(columns=True)
 
         # Add columns with justified headers
         for col, dtype in zip(self.df.columns, self.df.dtypes):
             style_config = STYLES.get(str(dtype), {"style": "green", "justify": "left"})
-            self.table.add_column(Text(col, justify=style_config["justify"]))
+            table.add_column(Text(col, justify=style_config["justify"]))
 
-        self.table.cursor_type = "cell"
-        self.table.focus()
+        table.cursor_type = "cell"
+        table.focus()
 
-    def on_mouse_scroll_down(self, event) -> None:
-        """Load more rows when scrolling down with mouse."""
-        self._check_and_load_more()
-
-    def _check_and_load_more(self) -> None:
-        """Check if we need to load more rows and load them."""
-        # If we've loaded everything, no need to check
-        if self.loaded_rows >= self.total_rows:
-            return
-
-        visible_row_count = self.table.size.height - self.table.header_height
-        bottom_visible_row = self.table.scroll_y + visible_row_count
-
-        # If visible area is close to the end of loaded rows, load more
-        if bottom_visible_row >= self.loaded_rows - 10:
-            self._load_rows(BATCH_SIZE)
-
-    def _load_rows(self, count: int) -> None:
-        """Load a batch of rows into the table."""
-        start_idx = self.loaded_rows
-        if start_idx >= self.total_rows:
-            return
-
-        end_idx = min(start_idx + count, self.total_rows)
-        df_slice = self.df.slice(start_idx, end_idx - start_idx)
-
-        for offset, row in enumerate(df_slice.rows()):
-            row_idx = start_idx + offset
+    def _load_rows(self, table: DataTable, count: int) -> None:
+        """Load rows into the table."""
+        for row_idx, row in enumerate(self.df.rows()):
             formatted_row = self._format_row(row)
             # Always add labels so they can be shown/hidden via CSS
-            self.table.add_row(*formatted_row, label=str(row_idx + 1))
-
-        self.loaded_rows = end_idx
+            table.add_row(*formatted_row, label=str(row_idx + 1))
 
     def _format_row(self, row) -> list[Text]:
         """Format a single row with proper styling and justification."""
