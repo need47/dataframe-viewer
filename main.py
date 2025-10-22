@@ -28,7 +28,7 @@ class DataFrameViewer(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("t", "toggle_row_labels", "Toggle Row Labels"),
-        ("c", "copy_row", "Copy Row"),
+        ("c", "copy_cell", "Copy Cell"),
     ]
 
     def __init__(self, df: pl.DataFrame):
@@ -51,7 +51,7 @@ class DataFrameViewer(App):
         table = self.query_one(DataTable)
         table.show_row_labels = not table.show_row_labels
 
-    def action_copy_row(self) -> None:
+    def action_copy_cell(self) -> None:
         """Copy the current cell to clipboard."""
         import subprocess
 
