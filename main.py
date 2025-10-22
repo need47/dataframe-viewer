@@ -100,6 +100,10 @@ class DataFrameViewer(App):
             # Let the table handle the navigation first
             self._check_and_load_more()
 
+    def on_mouse_scroll_down(self, event) -> None:
+        """Load more rows when scrolling down with mouse."""
+        self._check_and_load_more()
+
     def _setup_table_columns(self) -> None:
         """Clear table and setup columns."""
         self.table.clear(columns=True)
@@ -112,10 +116,6 @@ class DataFrameViewer(App):
 
         self.table.cursor_type = "cell"
         self.table.focus()
-
-    def on_mouse_scroll_down(self, event) -> None:
-        """Load more rows when scrolling down with mouse."""
-        self._check_and_load_more()
 
     def _check_and_load_more(self) -> None:
         """Check if we need to load more rows and load them."""
