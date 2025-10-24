@@ -425,6 +425,87 @@ class EditCellScreen(ModalScreen):
             return value_str
 
 
+class SearchScreen(ModalScreen):
+    """Modal screen to search for values in a column."""
+
+    CSS = """
+    SearchScreen {
+        align: center middle;
+    }
+
+    SearchScreen > Static {
+        width: 60;
+        height: auto;
+        border: solid $primary;
+        background: $surface;
+        padding: 2;
+    }
+
+    SearchScreen Input {
+        margin: 1 0;
+    }
+
+    SearchScreen #button-container {
+        width: 100%;
+        height: 3;
+        align: center middle;
+    }
+
+    SearchScreen Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, col_name: str, default_value: str = ""):
+        super().__init__()
+        self.col_name = col_name
+        self.default_value = default_value
+
+    def compose(self) -> ComposeResult:
+        with Static(id="search-container") as container:
+            container.border_title = "Search"
+
+            # Display column info
+            info_text = f"Search in: {self.col_name}"
+            yield Static(info_text, id="info")
+
+            # Input field for search term with default value
+            self.search_input = Input(
+                value=self.default_value, placeholder="Enter search term..."
+            )
+            self.search_input.select_all()
+            yield self.search_input
+
+            with Horizontal(id="button-container"):
+                yield Button("Search", id="search", variant="success")
+                yield Button("Cancel", id="cancel", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "search":
+            self._do_search()
+        elif event.button.id == "cancel":
+            self.dismiss(None)
+
+    def on_key(self, event) -> None:
+        if event.key == "enter":
+            self._do_search()
+            event.stop()
+        elif event.key == "escape":
+            self.dismiss(None)
+            event.stop()
+
+    def _do_search(self) -> None:
+        """Perform the search."""
+        search_term = self.search_input.value.strip()
+
+        if not search_term:
+            self.app.notify("Search term cannot be empty", title="Error")
+            return
+
+        # Dismiss with the search term
+        self.dismiss(search_term)
+
+
 # Pagination settings
 INITIAL_BATCH_SIZE = 100  # Load this many rows initially
 BATCH_SIZE = 50  # Load this many rows when scrolling
@@ -436,7 +517,7 @@ class DataFrameViewer(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("d", "toggle_dark", "Toggle Dark Mode"),
-        ("t", "toggle_row_labels", "Toggle Row Labels"),
+        ("l", "toggle_row_labels", "Toggle Row Labels"),
         ("c", "copy_cell", "Copy Cell"),
     ]
 
@@ -447,6 +528,7 @@ class DataFrameViewer(App):
         self.filename = filename
         self.loaded_rows = 0  # Track how many rows are currently loaded
         self.sorted_columns = {}  # Track sort keys as dict of col_name -> descending
+        self.selected_rows = [False] * len(self.df)  # Track selected rows
 
         # Reopen stdin to /dev/tty for proper terminal interaction
         if not sys.stdin.isatty():
@@ -507,6 +589,12 @@ class DataFrameViewer(App):
         elif event.key == "e":
             # Open edit modal for current cell
             self._edit_cell()
+        elif event.key == "vertical_line":  # '|' key
+            # Open search modal for current column
+            self._search_column()
+        elif event.key == "t":
+            # Toggle selected rows highlighting
+            self._toggle_selected_rows()
 
     def on_mouse_scroll_down(self, event) -> None:
         """Load more rows when scrolling down with mouse."""
@@ -800,6 +888,126 @@ class DataFrameViewer(App):
             self.notify(f"Cell updated to [on $primary]{cell_value}[/]", title="Edit")
         except Exception as e:
             self.app.notify(f"Failed to update cell: {str(e)}", title="Error")
+
+    def _search_column(self) -> None:
+        """Open modal to search in the selected column."""
+        row_idx = self.table.cursor_row
+        col_idx = self.table.cursor_column
+
+        if col_idx >= len(self.df.columns):
+            return
+
+        # Ensure all rows are loaded for searching
+        if self.loaded_rows < len(self.df):
+            self._load_rows(len(self.df) - self.loaded_rows)
+
+        col_name = self.df.columns[col_idx]
+
+        # Get current cell value as default search term
+        current_value = self.df.item(row_idx, col_idx)
+        default_search = str(current_value) if current_value is not None else ""
+
+        # Push the search modal screen
+        self.push_screen(
+            SearchScreen(col_name, default_search),
+            callback=self._on_search_screen,
+        )
+
+    def _on_search_screen(self, search_term: str | None) -> None:
+        """Handle result from SearchScreen."""
+        if search_term is None:
+            return
+
+        col_idx = self.table.cursor_column
+        col_name = self.df.columns[col_idx]
+
+        try:
+            # Convert column to string for searching
+            col_series = self.df[col_name].cast(pl.String)
+
+            # Use Polars str.contains() to find matching rows
+            # Returns a boolean Series
+            self.selected_rows = col_series.str.contains(search_term)
+
+            # Highlight selected rows and get count
+            match_count = self._highlight_selected_rows()
+
+            if match_count == 0:
+                self.notify(f"No matches found for: {search_term}", title="Search")
+                return
+
+            self.notify(
+                f"Found [on $primary]{match_count}[/] matches for [on $primary]{search_term}[/]",
+                title="Search",
+            )
+        except Exception as e:
+            self.app.notify(f"Search failed: {str(e)}", title="Error")
+
+    def _highlight_selected_rows(self) -> int:
+        """Update all rows, highlighting selected ones in red and restoring others to default.
+
+        Returns:
+            The count of highlighted rows.
+        """
+        highlighted_count = 0
+
+        # Update all rows based on selected state
+        for row_idx in range(len(self.df)):
+            is_selected = self.selected_rows[row_idx]
+
+            # Update all cells in this row
+            for col_idx in range(len(self.df.columns)):
+                col_name_cell = self.df.columns[col_idx]
+                cell_value = self.df.item(row_idx, col_idx)
+                dtype = self.df.dtypes[col_idx]
+
+                # Get style config based on dtype
+                style_config = STYLES.get(str(dtype), {"style": "", "justify": ""})
+                justify = style_config.get("justify", "")
+
+                # Use red for selected rows, default style for others
+                style = "red" if is_selected else style_config.get("style", "")
+
+                formatted_value = Text(
+                    str(cell_value) if cell_value is not None else "-",
+                    style=style,
+                    justify=justify,
+                )
+
+                row_key = str(row_idx + 1)
+                col_key = col_name_cell
+                self.table.update_cell(row_key, col_key, formatted_value)
+
+            if is_selected:
+                highlighted_count += 1
+
+        return highlighted_count
+
+    def _toggle_selected_rows(self) -> None:
+        """Toggle selected rows highlighting on/off."""
+        # Check if any rows are currently selected
+        selected_count = sum(self.selected_rows)
+
+        if selected_count == 0:
+            self.notify("No rows selected to toggle", title="Toggle")
+            return
+
+        # Invert all selected rows
+        self.selected_rows = [not match for match in self.selected_rows]
+
+        # Check if we're highlighting or un-highlighting
+        new_selected_count = sum(self.selected_rows)
+
+        if new_selected_count == 0:
+            self.notify("Selection cleared", title="Toggle")
+        else:
+            self.notify(
+                f"Toggled selection - now showing [on $primary]{new_selected_count}[/] rows",
+                title="Toggle",
+            )
+
+        # Refresh the highlighting (also restores default styles for unselected rows)
+        self._highlight_selected_rows()
 
 
 if __name__ == "__main__":
