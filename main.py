@@ -327,7 +327,6 @@ class DataFrameViewer(App):
         self.loaded_rows = 0  # Track how many rows are currently loaded
         self.total_rows = len(df)
         self.sorted_columns = {}  # Track sort keys as dict of col_name -> descending
-        self.visible_columns = list(df.columns)  # Track which columns are visible
 
         # Reopen stdin to /dev/tty for proper terminal interaction
         if not sys.stdin.isatty():
@@ -426,25 +425,17 @@ class DataFrameViewer(App):
         self.loaded_rows = 0
         self.total_rows = len(self.dataframe)
         self.sorted_columns = {}
-        self.visible_columns = list(self.dataframe.columns)
 
         self._setup_columns()
         self._load_rows(INITIAL_BATCH_SIZE)
 
     def _setup_columns(self) -> None:
-        """Clear table and setup columns.
-
-        Args:
-            visible_columns: List of column names to display. If None, all columns are visible.
-        """
-
+        """Clear table and setup columns."""
         self.table.clear(columns=True)
         self.loaded_rows = 0
 
-        # Add columns with justified headers (only visible columns)
+        # Add columns with justified headers
         for col, dtype in zip(self.df.columns, self.df.dtypes):
-            if col not in self.visible_columns:
-                continue
             style_config = STYLES.get(str(dtype), {"style": "green", "justify": "left"})
             self.table.add_column(Text(col, justify=style_config["justify"]), key=col)
 
@@ -475,9 +466,7 @@ class DataFrameViewer(App):
 
         for row_idx, row in enumerate(df_slice.rows(), start_idx):
             vals, dtypes = [], []
-            for val, col, dtype in zip(row, self.df.columns, self.df.dtypes):
-                if col not in self.visible_columns:
-                    continue
+            for val, dtype in zip(row, self.df.dtypes):
                 vals.append(val)
                 dtypes.append(dtype)
             formatted_row = _format_row(vals, dtypes)
@@ -503,23 +492,20 @@ class DataFrameViewer(App):
     def _remove_current_column(self) -> None:
         """Remove the currently selected column from the table."""
         col_idx = self.table.cursor_column
-        if col_idx >= len(self.visible_columns):
+        if col_idx >= len(self.df.columns):
             return
 
         # Get the column name to remove
-        col_to_remove = self.visible_columns[col_idx]
+        col_to_remove = self.df.columns[col_idx]
 
         # Remove the column from the table display using the column name as key
         self.table.remove_column(col_to_remove)
-
-        # Remove from visible columns
-        self.visible_columns.remove(col_to_remove)
 
         # Remove from sorted columns if present
         if col_to_remove in self.sorted_columns:
             del self.sorted_columns[col_to_remove]
 
-        # Remove from dataframe view
+        # Remove from dataframe
         self.df = self.df.drop(col_to_remove)
 
         self.notify(
@@ -538,10 +524,10 @@ class DataFrameViewer(App):
             descending: If True, sort in descending order. If False, ascending order.
         """
         col_idx = self.table.cursor_column
-        if col_idx >= len(self.visible_columns):
+        if col_idx >= len(self.df.columns):
             return
 
-        col_to_sort = self.visible_columns[col_idx]
+        col_to_sort = self.df.columns[col_idx]
 
         # Check if this column is already in the sort keys
         old_desc = self.sorted_columns.get(col_to_sort)
@@ -637,7 +623,7 @@ class DataFrameViewer(App):
     def _show_frequency(self) -> None:
         """Show frequency distribution for the current column."""
         col_idx = self.table.cursor_column
-        if col_idx >= len(self.visible_columns):
+        if col_idx >= len(self.df.columns):
             return
 
         # Push the frequency modal screen
