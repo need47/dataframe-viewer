@@ -446,7 +446,6 @@ class DataFrameViewer(App):
         self.df = df  # Internal dataframe
         self.filename = filename
         self.loaded_rows = 0  # Track how many rows are currently loaded
-        self.total_rows = len(df)
         self.sorted_columns = {}  # Track sort keys as dict of col_name -> descending
 
         # Reopen stdin to /dev/tty for proper terminal interaction
@@ -472,7 +471,7 @@ class DataFrameViewer(App):
             self.table.move_cursor(row=0)
         elif event.key == "G":
             # Load all remaining rows before jumping to end
-            remaining = self.total_rows - self.loaded_rows
+            remaining = len(self.df) - self.loaded_rows
             if remaining > 0:
                 self._load_rows(remaining)
             self.table.move_cursor(row=self.table.row_count - 1)
@@ -547,7 +546,6 @@ class DataFrameViewer(App):
         # Reset to original dataframe
         self.df = self.dataframe
         self.loaded_rows = 0
-        self.total_rows = len(self.dataframe)
         self.sorted_columns = {}
 
         self._setup_columns()
@@ -569,7 +567,7 @@ class DataFrameViewer(App):
     def _check_and_load_more(self) -> None:
         """Check if we need to load more rows and load them."""
         # If we've loaded everything, no need to check
-        if self.loaded_rows >= self.total_rows:
+        if self.loaded_rows >= len(self.df):
             return
 
         visible_row_count = self.table.size.height - self.table.header_height
@@ -582,10 +580,10 @@ class DataFrameViewer(App):
     def _load_rows(self, count: int) -> None:
         """Load a batch of rows into the table."""
         start_idx = self.loaded_rows
-        if start_idx >= self.total_rows:
+        if start_idx >= len(self.df):
             return
 
-        end_idx = min(start_idx + count, self.total_rows)
+        end_idx = min(start_idx + count, len(self.df))
         df_slice = self.df.slice(start_idx, end_idx - start_idx)
 
         for row_idx, row in enumerate(df_slice.rows(), start_idx):
@@ -601,14 +599,12 @@ class DataFrameViewer(App):
         self.loaded_rows = end_idx
 
         if count != INITIAL_BATCH_SIZE:
-            self.notify(
-                f"Loaded {self.loaded_rows}/{self.total_rows} rows", title="Load"
-            )
+            self.notify(f"Loaded {self.loaded_rows}/{len(self.df)} rows", title="Load")
 
     def _view_row_detail(self) -> None:
         """Open a modal screen to view the selected row's details."""
         row_idx = self.table.cursor_row
-        if row_idx >= self.total_rows:
+        if row_idx >= len(self.df):
             return
 
         # Push the modal screen
@@ -684,8 +680,6 @@ class DataFrameViewer(App):
                 sort_cols, descending=descending_flags, nulls_last=True
             )
 
-        self.total_rows = len(self.df)
-
         # Recreate the table for display
         self._setup_columns()
         self._load_rows(INITIAL_BATCH_SIZE)
@@ -759,7 +753,7 @@ class DataFrameViewer(App):
         row_idx = self.table.cursor_row
         col_idx = self.table.cursor_column
 
-        if row_idx >= self.total_rows or col_idx >= len(self.df.columns):
+        if row_idx >= len(self.df) or col_idx >= len(self.df.columns):
             return
 
         # Push the edit modal screen
@@ -781,7 +775,7 @@ class DataFrameViewer(App):
         try:
             # Update the cell in the dataframe
             self.df = self.df.with_columns(
-                pl.when(pl.arange(0, df.height) == row_idx)
+                pl.when(pl.arange(0, len(self.df)) == row_idx)
                 .then(pl.lit(new_value))
                 .otherwise(pl.col(col_name))
                 .alias(col_name)
