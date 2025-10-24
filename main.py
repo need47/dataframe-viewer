@@ -233,6 +233,77 @@ class RowDetailScreen(ModalScreen):
         yield detail_table
 
 
+class FrequencyScreen(ModalScreen):
+    """Modal screen to display frequency of values in a column."""
+
+    BINDINGS = [
+        ("q,escape", "app.pop_screen", "Close"),
+    ]
+
+    CSS = """
+    FrequencyScreen {
+        align: center middle;
+    }
+
+    FrequencyScreen > DataTable {
+        width: 60;
+        height: auto;
+        border: solid $primary;
+    }
+    """
+
+    def __init__(self, column: str, dtype: pl.DataType, df: pl.DataFrame):
+        super().__init__()
+        self.column = column
+        self.dtype = dtype
+        self.df = df
+
+    def compose(self) -> ComposeResult:
+        """Create the frequency table."""
+        column_style = STYLES.get(str(self.dtype), {"style": "", "justify": ""})
+        # Create frequency table
+        freq_table = DataTable(zebra_stripes=True)
+        freq_table.add_column(Text(self.column, justify=column_style["justify"]))
+        freq_table.add_column(Text("Count", justify="right"))
+        freq_table.add_column(Text("%", justify="right"))
+
+        # Calculate frequencies using Polars
+        freq_df = (
+            self.df[self.column].value_counts(sort=True).sort("count", descending=True)
+        )
+
+        total_count = len(self.df)
+
+        # Get style config for Int64 and Float64
+        int_style_config = STYLES.get("Int64")
+        float_style_config = STYLES.get("Float64")
+
+        # Add rows to the frequency table
+        for row in freq_df.rows():
+            value, count = row
+            percentage = (count / total_count) * 100
+
+            freq_table.add_row(
+                Text(
+                    str(value) if value is not None else "-",
+                    style=column_style["style"],
+                    justify=column_style["justify"],
+                ),
+                Text(
+                    str(count),
+                    style=int_style_config["style"],
+                    justify=int_style_config["justify"],
+                ),
+                Text(
+                    f"{percentage:.2f}",
+                    style=float_style_config["style"],
+                    justify=float_style_config["justify"],
+                ),
+            )
+
+        yield freq_table
+
+
 # Pagination settings
 INITIAL_BATCH_SIZE = 100  # Load this many rows initially
 BATCH_SIZE = 50  # Load this many rows when scrolling
@@ -311,6 +382,9 @@ class DataFrameViewer(App):
         elif event.key == "s":
             # Save dataframe to CSV
             self._save_to_file()
+        elif event.key == "f":
+            # Open frequency modal for current column
+            self._show_frequency()
 
     def on_mouse_scroll_down(self, event) -> None:
         """Load more rows when scrolling down with mouse."""
@@ -570,6 +644,18 @@ class DataFrameViewer(App):
             self.notify(f"Saved to {filename}", title="Save")
         except Exception as e:
             self.notify(f"Failed to save: {str(e)}", title="Error")
+
+    def _show_frequency(self) -> None:
+        """Show frequency distribution for the current column."""
+        col_idx = self.table.cursor_column
+        if col_idx >= len(self.visible_columns):
+            return
+
+        col_name = self.visible_columns[col_idx]
+        col_dtype = self.df.schema[col_name]
+
+        # Push the frequency modal screen
+        self.push_screen(FrequencyScreen(col_name, col_dtype, self.df))
 
 
 if __name__ == "__main__":
