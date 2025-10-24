@@ -5,7 +5,7 @@ from io import StringIO
 import polars as pl
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Static
 
@@ -59,18 +59,12 @@ class SaveFileScreen(ModalScreen):
         align: center middle;
     }
 
-    SaveFileScreen > Vertical {
+    SaveFileScreen > Static {
         width: 60;
         height: auto;
         border: solid $primary;
         background: $surface;
-        padding: 1;
-    }
-
-    SaveFileScreen #title {
-        width: 100%;
-        text-align: center;
-        margin-bottom: 1;
+        padding: 2;
     }
 
     SaveFileScreen Input {
@@ -93,8 +87,9 @@ class SaveFileScreen(ModalScreen):
         self.filename = filename
 
     def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static("Save DataFrame", id="title")
+        with Static(id="save-container") as container:
+            container.border_title = "Save DataFrame"
+
             self.filename_input = Input(value=self.filename, id="input")
             self.filename_input.value = self.filename
             self.filename_input.select_all()
@@ -134,18 +129,12 @@ class OverwriteFileScreen(ModalScreen):
         align: center middle;
     }
 
-    OverwriteFileScreen > Vertical {
+    OverwriteFileScreen > Static {
         width: 60;
         height: auto;
         border: solid $primary;
         background: $surface;
-        padding: 1;
-    }
-
-    OverwriteFileScreen #message {
-        width: 100%;
-        text-align: center;
-        margin-bottom: 1;
+        padding: 2;
     }
 
     OverwriteFileScreen #button-container {
@@ -161,8 +150,8 @@ class OverwriteFileScreen(ModalScreen):
     """
 
     def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static("File already exists. Overwrite?", id="message")
+        with Static(id="overwrite-container") as container:
+            container.border_title = "File already exists. Overwrite?"
             with Horizontal(id="button-container"):
                 yield Button("Confirm", id="confirm", variant="success")
                 yield Button("Cancel", id="cancel", variant="error")
@@ -304,6 +293,138 @@ class FrequencyScreen(ModalScreen):
         yield freq_table
 
 
+class EditCellScreen(ModalScreen):
+    """Modal screen to edit a single cell value."""
+
+    CSS = """
+    EditCellScreen {
+        align: center middle;
+    }
+
+    EditCellScreen > Static {
+        width: 60;
+        height: auto;
+        border: solid $primary;
+        background: $surface;
+        padding: 2;
+    }
+
+    EditCellScreen Input {
+        margin: 1 0;
+    }
+
+    EditCellScreen #button-container {
+        width: 100%;
+        height: 3;
+        align: center middle;
+    }
+
+    EditCellScreen Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, row_idx: int, col_idx: int, df: pl.DataFrame):
+        super().__init__()
+        self.row_idx = row_idx
+        self.col_idx = col_idx
+        self.df = df
+        self.col_name = df.columns[col_idx]
+        self.col_dtype = df.dtypes[col_idx]
+        self.original_value = df.item(row_idx, col_idx)
+
+    def compose(self) -> ComposeResult:
+        with Static(id="edit-container") as container:
+            container.border_title = "Edit Cell"
+
+            # Display column info
+            info_text = f"{self.col_name} ({self.col_dtype})"
+            yield Static(info_text, id="info")
+
+            # Input field with original value
+            self.edit_input = Input(
+                value=str(self.original_value)
+                if self.original_value is not None
+                else ""
+            )
+            self.edit_input.select_all()
+            yield self.edit_input
+
+            with Horizontal(id="button-container"):
+                yield Button("Save", id="save", variant="success")
+                yield Button("Cancel", id="cancel", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self._save_edit()
+        elif event.button.id == "cancel":
+            self.dismiss(None)
+
+    def on_key(self, event) -> None:
+        if event.key == "enter":
+            self._save_edit()
+            event.stop()
+        elif event.key == "escape":
+            self.dismiss(None)
+            event.stop()
+
+    def _save_edit(self) -> None:
+        """Validate and save the edited value."""
+        new_value_str = self.edit_input.value.strip()
+
+        # Check if value changed
+        old_value_str = (
+            str(self.original_value) if self.original_value is not None else ""
+        )
+        if new_value_str == old_value_str:
+            self.dismiss(None)
+            return
+
+        # Parse and validate based on column dtype
+        try:
+            new_value = self._parse_value(new_value_str)
+        except ValueError as e:
+            self.app.notify(f"Invalid value: {str(e)}", title="Error")
+            return
+
+        # Dismiss with the new value
+        self.dismiss((self.row_idx, self.col_idx, new_value))
+
+    def _parse_value(self, value_str: str):
+        """Parse string value based on column dtype."""
+        dtype_str = str(self.col_dtype)
+
+        if dtype_str == "Int64":
+            return int(value_str)
+        elif dtype_str == "Float64":
+            return float(value_str)
+        elif dtype_str == "String":
+            return value_str
+        elif dtype_str == "Boolean":
+            if value_str.lower() in ("true", "1", "yes"):
+                return True
+            elif value_str.lower() in ("false", "0", "no"):
+                return False
+            else:
+                raise ValueError(
+                    "Boolean must be 'true', 'false', 'yes', 'no', '1', or '0'"
+                )
+        elif dtype_str == "Date":
+            # Try to parse ISO date format (YYYY-MM-DD)
+            return pl.col(self.col_name).str.to_date().to_list()[0].__class__(value_str)
+        elif dtype_str == "Datetime":
+            # Try to parse ISO datetime format
+            return (
+                pl.col(self.col_name)
+                .str.to_datetime()
+                .to_list()[0]
+                .__class__(value_str)
+            )
+        else:
+            # For unknown types, return as string
+            return value_str
+
+
 # Pagination settings
 INITIAL_BATCH_SIZE = 100  # Load this many rows initially
 BATCH_SIZE = 50  # Load this many rows when scrolling
@@ -384,6 +505,9 @@ class DataFrameViewer(App):
         elif event.key == "f":
             # Open frequency modal for current column
             self._show_frequency()
+        elif event.key == "e":
+            # Open edit modal for current cell
+            self._edit_cell()
 
     def on_mouse_scroll_down(self, event) -> None:
         """Load more rows when scrolling down with mouse."""
@@ -471,7 +595,8 @@ class DataFrameViewer(App):
                 dtypes.append(dtype)
             formatted_row = _format_row(vals, dtypes)
             # Always add labels so they can be shown/hidden via CSS
-            self.table.add_row(*formatted_row, label=str(row_idx + 1))
+            rid = str(row_idx + 1)
+            self.table.add_row(*formatted_row, key=rid, label=rid)
 
         self.loaded_rows = end_idx
 
@@ -572,7 +697,7 @@ class DataFrameViewer(App):
             f"[on $primary]{col}[/] ({'desc' if desc else 'asc'})"
             for col, desc in self.sorted_columns.items()
         )
-        self.notify(f"Sorted by {sort_by}", title="Sort")
+        self.notify(f"Sorted by: {sort_by}", title="Sort")
 
     def _save_to_file(self) -> None:
         """Open save file dialog."""
@@ -616,7 +741,7 @@ class DataFrameViewer(App):
         try:
             self.df.write_csv(filename, separator=separator)
             self.filename = filename
-            self.notify(f"Saved to {filename}", title="Save")
+            self.notify(f"Saved to [on $primary]{filename}[/]", title="Save")
         except Exception as e:
             self.notify(f"Failed to save: {str(e)}", title="Error")
 
@@ -628,6 +753,59 @@ class DataFrameViewer(App):
 
         # Push the frequency modal screen
         self.push_screen(FrequencyScreen(col_idx, self.df))
+
+    def _edit_cell(self) -> None:
+        """Open modal to edit the selected cell."""
+        row_idx = self.table.cursor_row
+        col_idx = self.table.cursor_column
+
+        if row_idx >= self.total_rows or col_idx >= len(self.df.columns):
+            return
+
+        # Push the edit modal screen
+        self.push_screen(
+            EditCellScreen(row_idx, col_idx, self.df),
+            callback=self._on_edit_cell_screen,
+        )
+
+    def _on_edit_cell_screen(self, result) -> None:
+        """Handle result from EditCellScreen."""
+        if result is None:
+            return
+
+        row_idx, col_idx, new_value = result
+        self.log(f"Editing cell at ({row_idx}, {col_idx}) to {new_value}")
+
+        # Update the dataframe
+        col_name = self.df.columns[col_idx]
+        try:
+            # Update the cell in the dataframe
+            self.df = self.df.with_columns(
+                pl.when(pl.arange(0, df.height) == row_idx)
+                .then(pl.lit(new_value))
+                .otherwise(pl.col(col_name))
+                .alias(col_name)
+            )
+
+            # Update the display
+            cell_value = self.df.item(row_idx, col_idx)
+            dtype = self.df.dtypes[col_idx]
+            style_config = STYLES.get(str(dtype), {"style": "", "justify": ""})
+            formatted_value = Text(
+                str(cell_value),
+                style=style_config["style"],
+                justify=style_config["justify"],
+            )
+
+            row_key = str(row_idx + 1)
+            col_key = str(col_name)
+            self.table.update_cell(row_key, col_key, formatted_value)
+
+            self.log(f"{self.table.get_cell(row_key, col_key) = }")
+
+            self.notify(f"Cell updated to [on $primary]{cell_value}[/]", title="Edit")
+        except Exception as e:
+            self.app.notify(f"Failed to update cell: {str(e)}", title="Error")
 
 
 if __name__ == "__main__":
