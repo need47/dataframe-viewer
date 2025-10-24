@@ -595,6 +595,17 @@ class DataFrameViewer(App):
         elif event.key == "t":
             # Toggle selected rows highlighting
             self._toggle_selected_rows()
+        elif event.key == "quotation_mark":  # '"' key
+            # Display selected rows only
+            # Check if any rows are currently selected
+            selected_count = sum(self.selected_rows)
+
+            if selected_count == 0:
+                self.notify("No rows selected to display", title="Filter")
+                return
+
+            # Display only selected rows and update the internal dataframe
+            self._highlight_rows(rm_unselected=True)
 
     def on_mouse_scroll_down(self, event) -> None:
         """Load more rows when scrolling down with mouse."""
@@ -930,7 +941,7 @@ class DataFrameViewer(App):
             self.selected_rows = col_series.str.contains(search_term)
 
             # Highlight selected rows and get count
-            match_count = self._highlight_selected_rows()
+            match_count = self._highlight_rows()
 
             if match_count == 0:
                 self.notify(f"No matches found for: {search_term}", title="Search")
@@ -943,8 +954,11 @@ class DataFrameViewer(App):
         except Exception as e:
             self.app.notify(f"Search failed: {str(e)}", title="Error")
 
-    def _highlight_selected_rows(self) -> int:
+    def _highlight_rows(self, rm_unselected: bool = False) -> int:
         """Update all rows, highlighting selected ones in red and restoring others to default.
+
+        Args:
+            rm_unselected: If True, remove unselected rows from the table display and from internal df. Defaults to False.
 
         Returns:
             The count of highlighted rows.
@@ -954,6 +968,9 @@ class DataFrameViewer(App):
         # Update all rows based on selected state
         for row_idx in range(len(self.df)):
             is_selected = self.selected_rows[row_idx]
+            if rm_unselected and not is_selected:
+                self.table.remove_row(str(row_idx + 1))
+                continue
 
             # Update all cells in this row
             for col_idx in range(len(self.df.columns)):
@@ -981,6 +998,17 @@ class DataFrameViewer(App):
             if is_selected:
                 highlighted_count += 1
 
+        if rm_unselected and highlighted_count > 0:
+            # Update internal dataframe to only selected rows
+            self.df = self.df.filter(pl.Series(self.selected_rows))
+
+            # Reset selected rows tracking
+            self.selected_rows = [True] * len(self.df)
+
+            self.notify(
+                f"Removed unselected rows. Now showing [on $primary]{highlighted_count}[/] rows",
+                title="Filter",
+            )
         return highlighted_count
 
     def _toggle_selected_rows(self) -> None:
@@ -1007,7 +1035,19 @@ class DataFrameViewer(App):
             )
 
         # Refresh the highlighting (also restores default styles for unselected rows)
-        self._highlight_selected_rows()
+        self._highlight_rows()
+
+    def _display_selected_rows_only(self) -> None:
+        """Display only selected rows, removing unselected ones from the table."""
+        # Check if any rows are currently selected
+        selected_count = sum(self.selected_rows)
+
+        if selected_count == 0:
+            self.notify("No rows selected to display", title="Filter")
+            return
+
+        # Display only selected rows and update the internal dataframe
+        self._highlight_rows(rm_unselected=True)
 
 
 if __name__ == "__main__":
