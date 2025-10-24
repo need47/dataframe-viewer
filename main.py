@@ -252,26 +252,25 @@ class FrequencyScreen(ModalScreen):
     }
     """
 
-    def __init__(self, column: str, df: pl.DataFrame):
+    def __init__(self, col_idx: int, df: pl.DataFrame):
         super().__init__()
-        self.column = column
+        self.col_idx = col_idx
         self.df = df
 
     def compose(self) -> ComposeResult:
         """Create the frequency table."""
-        column_dtype = str(self.df.schema[self.column])
-        column_style_config = STYLES.get(column_dtype, {"style": "", "justify": ""})
+        column = self.df.columns[self.col_idx]
+        dtype = str(self.df.dtypes[self.col_idx])
+        column_style_config = STYLES.get(dtype, {"style": "", "justify": ""})
 
         # Create frequency table
         freq_table = DataTable(zebra_stripes=True)
-        freq_table.add_column(Text(self.column, justify=column_style_config["justify"]))
+        freq_table.add_column(Text(column, justify=column_style_config["justify"]))
         freq_table.add_column(Text("Count", justify="right"))
         freq_table.add_column(Text("%", justify="right"))
 
         # Calculate frequencies using Polars
-        freq_df = (
-            self.df[self.column].value_counts(sort=True).sort("count", descending=True)
-        )
+        freq_df = self.df[column].value_counts(sort=True).sort("count", descending=True)
 
         total_count = len(self.df)
 
@@ -641,10 +640,8 @@ class DataFrameViewer(App):
         if col_idx >= len(self.visible_columns):
             return
 
-        col_name = self.visible_columns[col_idx]
-
         # Push the frequency modal screen
-        self.push_screen(FrequencyScreen(col_name, self.df))
+        self.push_screen(FrequencyScreen(col_idx, self.df))
 
 
 if __name__ == "__main__":
