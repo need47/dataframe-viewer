@@ -1,4 +1,3 @@
-import argparse
 import os
 import sys
 from io import StringIO
@@ -19,11 +18,17 @@ STYLES = {
 }
 
 
-def _format_row(row, dtypes, apply_justify=True) -> list[Text]:
-    """Format a single row with proper styling and justification."""
+def _format_row(vals, dtypes, apply_justify=True) -> list[Text]:
+    """Format a single row with proper styling and justification.
+
+    Args:
+        vals: The list of values in the row.
+        dtypes: The list of data types corresponding to each value.
+        apply_justify: Whether to apply justification styling. Defaults to True.
+    """
     formatted_row = []
 
-    for val, dtype in zip(row, dtypes, strict=True):
+    for val, dtype in zip(vals, dtypes, strict=True):
         style_config = STYLES.get(str(dtype), {"style": "", "justify": ""})
 
         # Format the value
@@ -63,7 +68,12 @@ class RowDetailScreen(ModalScreen):
     }
     """
 
-    def __init__(self, columns: list[str], row_values: list, dtypes: list):
+    def __init__(
+        self,
+        columns: list[str],
+        row_values: list,
+        dtypes: list,
+    ):
         super().__init__()
         self.columns = columns
         self.row_values = row_values
@@ -109,9 +119,12 @@ class DataFrameViewer(App):
 
     def __init__(self, df: pl.DataFrame):
         super().__init__()
-        self.df = df
+        self.dataframe = df  # Original dataframe
+        self.df = df  # Internal dataframe
         self.loaded_rows = 0  # Track how many rows are currently loaded
         self.total_rows = len(df)
+        self.sorted_columns = {}  # Track sort keys as dict of col_name -> descending
+        self.visible_columns = list(df.columns)  # Track which columns are visible
 
         # Reopen stdin to /dev/tty for proper terminal interaction
         if not sys.stdin.isatty():
@@ -125,14 +138,14 @@ class DataFrameViewer(App):
 
     def on_mount(self) -> None:
         """Set up the DataTable when app starts."""
-        self._setup_table_columns()
-        self._load_rows(INITIAL_BATCH_SIZE)
+        self._setup_table()
         # Hide labels by default after initial load
         self.call_later(lambda: setattr(self.table, "show_row_labels", False))
 
     def on_key(self, event) -> None:
         """Handle key events."""
         if event.key == "g":
+            # Jump to top
             self.table.move_cursor(row=0)
         elif event.key == "G":
             # Load all remaining rows before jumping to end
@@ -146,6 +159,23 @@ class DataFrameViewer(App):
         elif event.key == "enter":
             # Open row detail modal
             self._view_row_detail()
+        elif event.key == "minus":
+            # Remove the current column
+            self._remove_current_column()
+        elif event.key == "left_square_bracket":  # '['
+            # Sort by current column in ascending order
+            self._sort_by_column(descending=False)
+        elif event.key == "right_square_bracket":  # ']'
+            # Sort by current column in descending order
+            self._sort_by_column(descending=True)
+        elif event.key == "r":
+            # Restore original display
+            self._setup_table()
+            # Hide labels by default after initial load
+            # self.call_later(lambda: setattr(self.table, "show_row_labels", False))
+            self.log(f"{self.table.show_row_labels = }")
+
+            self.notify("Restored original display", title="Reset")
 
     def on_mouse_scroll_down(self, event) -> None:
         """Load more rows when scrolling down with mouse."""
@@ -162,7 +192,7 @@ class DataFrameViewer(App):
         row_idx = self.table.cursor_row
         col_idx = self.table.cursor_column
 
-        # Get the cell value
+        # Get the cell value from the sorted dataframe
         cell_str = str(self.df.item(row_idx, col_idx))
 
         # Copy to clipboard using xclip or pbcopy (macOS)
@@ -180,15 +210,34 @@ class DataFrameViewer(App):
         except FileNotFoundError:
             self.notify("clipboard tool not available", title="FileNotFound")
 
-    def _setup_table_columns(self) -> None:
-        """Clear table and setup columns."""
+    def _setup_table(self) -> None:
+        """Setup the table for display."""
+        # Reset to original dataframe
+        self.df = self.dataframe
+        self.loaded_rows = 0
+        self.total_rows = len(self.dataframe)
+        self.sorted_columns = {}
+        self.visible_columns = list(self.dataframe.columns)
+
+        self._setup_columns()
+        self._load_rows(INITIAL_BATCH_SIZE)
+
+    def _setup_columns(self) -> None:
+        """Clear table and setup columns.
+
+        Args:
+            visible_columns: List of column names to display. If None, all columns are visible.
+        """
+
         self.table.clear(columns=True)
         self.loaded_rows = 0
 
-        # Add columns with justified headers
+        # Add columns with justified headers (only visible columns)
         for col, dtype in zip(self.df.columns, self.df.dtypes):
+            if col not in self.visible_columns:
+                continue
             style_config = STYLES.get(str(dtype), {"style": "green", "justify": "left"})
-            self.table.add_column(Text(col, justify=style_config["justify"]))
+            self.table.add_column(Text(col, justify=style_config["justify"]), key=col)
 
         self.table.cursor_type = "cell"
         self.table.focus()
@@ -215,28 +264,133 @@ class DataFrameViewer(App):
         end_idx = min(start_idx + count, self.total_rows)
         df_slice = self.df.slice(start_idx, end_idx - start_idx)
 
-        for offset, row in enumerate(df_slice.rows()):
-            row_idx = start_idx + offset
-            formatted_row = _format_row(row, self.df.dtypes)
+        for row_idx, row in enumerate(df_slice.rows(), start_idx):
+            vals, dtypes = [], []
+            for val, col, dtype in zip(row, self.df.columns, self.df.dtypes):
+                if col not in self.visible_columns:
+                    continue
+                vals.append(val)
+                dtypes.append(dtype)
+            formatted_row = _format_row(vals, dtypes)
             # Always add labels so they can be shown/hidden via CSS
             self.table.add_row(*formatted_row, label=str(row_idx + 1))
 
         self.loaded_rows = end_idx
 
+        if count != INITIAL_BATCH_SIZE:
+            self.notify(
+                f"Loaded {self.loaded_rows}/{self.total_rows} rows", title="Load"
+            )
+
     def _view_row_detail(self) -> None:
         """Open a modal screen to view the selected row's details."""
         row_idx = self.table.cursor_row
-        if row_idx < self.df.__len__():
-            # Get the row data from the dataframe
-            row_data = self.df.row(row_idx)
-            # Get column names and dtypes
-            columns = list(self.df.columns)
-            dtypes = list(self.df.dtypes)
-            # Push the modal screen
-            self.push_screen(RowDetailScreen(columns, row_data, dtypes))
+        if row_idx >= self.total_rows:
+            return
+
+        columns, vals, dtypes = [], [], []
+        # Get the row data from the dataframe
+        for val, col, dtype in zip(
+            self.df.row(row_idx), self.df.columns, self.df.dtypes
+        ):
+            if col not in self.visible_columns:
+                continue
+            columns.append(col)
+            vals.append(val)
+            dtypes.append(dtype)
+
+        # Push the modal screen
+        self.push_screen(RowDetailScreen(columns, vals, dtypes))
+
+    def _remove_current_column(self) -> None:
+        """Remove the currently selected column from the table."""
+        col_idx = self.table.cursor_column
+        if col_idx >= len(self.visible_columns):
+            return
+
+        # Get the column name to remove
+        col_to_remove = self.visible_columns[col_idx]
+
+        # Remove the column from the table display using the column name as key
+        self.table.remove_column(col_to_remove)
+
+        # Remove from visible columns
+        self.visible_columns.remove(col_to_remove)
+
+        # Remove from sorted columns if present
+        if col_to_remove in self.sorted_columns:
+            del self.sorted_columns[col_to_remove]
+
+        self.notify(
+            f"Removed column [on $primary]{col_to_remove}[/] from display",
+            title="Column",
+        )
+
+    def _sort_by_column(self, descending: bool = False) -> None:
+        """Sort the dataframe by the currently selected column.
+
+        Supports multi-column sorting:
+        - First press on a column: sort by that column only
+        - Subsequent presses on other columns: add to sort order
+
+        Args:
+            descending: If True, sort in descending order. If False, ascending order.
+        """
+        col_idx = self.table.cursor_column
+        if col_idx >= len(self.visible_columns):
+            return
+
+        col_to_sort = self.visible_columns[col_idx]
+
+        # Check if this column is already in the sort keys
+        old_desc = self.sorted_columns.get(col_to_sort)
+        if old_desc is not None:
+            del self.sorted_columns[col_to_sort]
+
+            if old_desc == descending:
+                # Same direction - remove this column from sort
+                self.notify(
+                    f"Already sorted. Removed [on $primary]{col_to_sort}[/] from the sorted list",
+                    title="Sort",
+                )
+                return
+            else:
+                # Toggle direction
+                self.sorted_columns[col_to_sort] = descending
+        else:
+            # Add new column to sort
+            self.sorted_columns[col_to_sort] = descending
+
+        # If no sort keys, reset to original order
+        if not self.sorted_columns:
+            self.df = self.dataframe
+        else:
+            # Apply multi-column sort
+            sort_cols = list(self.sorted_columns.keys())
+            descending_flags = list(self.sorted_columns.values())
+            self.df = self.dataframe.sort(
+                sort_cols, descending=descending_flags, nulls_last=True
+            )
+
+        self.total_rows = len(self.df)
+
+        # Recreate the table for display
+        self._setup_columns()
+        self._load_rows(INITIAL_BATCH_SIZE)
+
+        # Restore cursor position on the sorted column
+        self.table.move_cursor(column=col_idx, row=0)
+
+        sort_by = ", ".join(
+            f"[on $primary]{col}[/] ({'desc' if desc else 'asc'})"
+            for col, desc in self.sorted_columns.items()
+        )
+        self.notify(f"Sorted by {sort_by}", title="Sort")
 
 
-def main():
+if __name__ == "__main__":
+    import argparse
+
     parser = argparse.ArgumentParser(
         description="Interactive CSV viewer for the terminal (Textual version)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -267,7 +421,3 @@ def main():
     # Run the app
     app = DataFrameViewer(df)
     app.run()
-
-
-if __name__ == "__main__":
-    main()
