@@ -96,17 +96,17 @@ class SaveFileScreen(ModalScreen):
             yield self.filename_input
 
             with Horizontal(id="button-container"):
-                yield Button("Confirm", id="confirm", variant="success")
-                yield Button("Cancel", id="cancel", variant="error")
+                yield Button("Yes", id="yes", variant="success")
+                yield Button("No", id="no", variant="error")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "confirm":
+        if event.button.id == "yes":
             filename = self.filename_input.value.strip()
             if filename:
                 self.dismiss(filename)
             else:
                 self.app.notify("Filename cannot be empty", title="Error")
-        elif event.button.id == "cancel":
+        elif event.button.id == "no":
             self.dismiss(None)
 
     def on_key(self, event):
@@ -153,13 +153,13 @@ class OverwriteFileScreen(ModalScreen):
         with Static(id="overwrite-container") as container:
             container.border_title = "File already exists. Overwrite?"
             with Horizontal(id="button-container"):
-                yield Button("Confirm", id="confirm", variant="success")
-                yield Button("Cancel", id="cancel", variant="error")
+                yield Button("Yes", id="yes", variant="success")
+                yield Button("No", id="no", variant="error")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "confirm":
+        if event.button.id == "yes":
             self.dismiss(True)
-        elif event.button.id == "cancel":
+        elif event.button.id == "no":
             self.dismiss(False)
 
     def on_key(self, event) -> None:
@@ -351,13 +351,13 @@ class EditCellScreen(ModalScreen):
             yield self.edit_input
 
             with Horizontal(id="button-container"):
-                yield Button("Save", id="save", variant="success")
-                yield Button("Cancel", id="cancel", variant="error")
+                yield Button("Yes", id="yes", variant="success")
+                yield Button("No", id="no", variant="error")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "save":
+        if event.button.id == "yes":
             self._save_edit()
-        elif event.button.id == "cancel":
+        elif event.button.id == "no":
             self.dismiss(None)
 
     def on_key(self, event) -> None:
@@ -477,13 +477,13 @@ class SearchScreen(ModalScreen):
             yield self.search_input
 
             with Horizontal(id="button-container"):
-                yield Button("Search", id="search", variant="success")
-                yield Button("Cancel", id="cancel", variant="error")
+                yield Button("Yes", id="yes", variant="success")
+                yield Button("No", id="no", variant="error")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "search":
+        if event.button.id == "yes":
             self._do_search()
-        elif event.button.id == "cancel":
+        elif event.button.id == "no":
             self.dismiss(None)
 
     def on_key(self, event) -> None:
@@ -913,10 +913,13 @@ class DataFrameViewer(App):
             self._load_rows(len(self.df) - self.loaded_rows)
 
         col_name = self.df.columns[col_idx]
+        col_dtype = self.df.dtypes[col_idx]
 
         # Get current cell value as default search term
         current_value = self.df.item(row_idx, col_idx)
         default_search = str(current_value) if current_value is not None else ""
+        if col_dtype == pl.Boolean:
+            default_search = default_search.lower()
 
         # Push the search modal screen
         self.push_screen(
@@ -937,8 +940,8 @@ class DataFrameViewer(App):
             col_series = self.df[col_name].cast(pl.String)
 
             # Use Polars str.contains() to find matching rows
-            # Returns a boolean Series
-            self.selected_rows = col_series.str.contains(search_term)
+            # Returns a boolean Series, convert to list
+            self.selected_rows = col_series.str.contains(search_term).to_list()
 
             # Highlight selected rows and get count
             match_count = self._highlight_rows()
@@ -1036,18 +1039,6 @@ class DataFrameViewer(App):
 
         # Refresh the highlighting (also restores default styles for unselected rows)
         self._highlight_rows()
-
-    def _display_selected_rows_only(self) -> None:
-        """Display only selected rows, removing unselected ones from the table."""
-        # Check if any rows are currently selected
-        selected_count = sum(self.selected_rows)
-
-        if selected_count == 0:
-            self.notify("No rows selected to display", title="Filter")
-            return
-
-        # Display only selected rows and update the internal dataframe
-        self._highlight_rows(rm_unselected=True)
 
 
 if __name__ == "__main__":
