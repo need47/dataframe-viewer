@@ -5,8 +5,9 @@ from io import StringIO
 import polars as pl
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import DataTable
+from textual.widgets import Button, DataTable, Input, Static
 
 STYLES = {
     "Int64": {"style": "cyan", "justify": "right"},
@@ -50,11 +51,141 @@ def _format_row(vals, dtypes, apply_justify=True) -> list[Text]:
     return formatted_row
 
 
+class SaveFileScreen(ModalScreen):
+    """Modal screen to save the dataframe to a CSV file."""
+
+    CSS = """
+    SaveFileScreen {
+        align: center middle;
+    }
+
+    SaveFileScreen > Vertical {
+        width: 60;
+        height: auto;
+        border: solid $primary;
+        background: $surface;
+        padding: 1;
+    }
+
+    SaveFileScreen #title {
+        width: 100%;
+        text-align: center;
+        margin-bottom: 1;
+    }
+
+    SaveFileScreen Input {
+        margin: 1 0;
+    }
+
+    SaveFileScreen #button-container {
+        width: 100%;
+        height: 3;
+        align: center middle;
+    }
+
+    SaveFileScreen Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, filename: str = "dataframe.csv"):
+        super().__init__()
+        self.filename = filename
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Save DataFrame", id="title")
+            self.filename_input = Input(value=self.filename, id="input")
+            self.filename_input.value = self.filename
+            self.filename_input.select_all()
+            yield self.filename_input
+
+            with Horizontal(id="button-container"):
+                yield Button("Confirm", id="confirm", variant="success")
+                yield Button("Cancel", id="cancel", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "confirm":
+            filename = self.filename_input.value.strip()
+            if filename:
+                self.dismiss(filename)
+            else:
+                self.app.notify("Filename cannot be empty", title="Error")
+        elif event.button.id == "cancel":
+            self.dismiss(None)
+
+    def on_key(self, event):
+        if event.key == "enter":
+            filename = self.filename_input.value.strip()
+            if filename:
+                self.dismiss(filename)
+            else:
+                self.app.notify("Filename cannot be empty", title="Error")
+            event.stop()
+        elif event.key == "escape":
+            self.dismiss(None)
+
+
+class OverwriteFileScreen(ModalScreen):
+    """Modal screen to confirm file overwrite."""
+
+    CSS = """
+    OverwriteFileScreen {
+        align: center middle;
+    }
+
+    OverwriteFileScreen > Vertical {
+        width: 60;
+        height: auto;
+        border: solid $primary;
+        background: $surface;
+        padding: 1;
+    }
+
+    OverwriteFileScreen #message {
+        width: 100%;
+        text-align: center;
+        margin-bottom: 1;
+    }
+
+    OverwriteFileScreen #button-container {
+        width: 100%;
+        height: 3;
+        margin-top: 1;
+        align: center middle;
+    }
+
+    OverwriteFileScreen Button {
+        margin: 0 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("File already exists. Overwrite?", id="message")
+            with Horizontal(id="button-container"):
+                yield Button("Confirm", id="confirm", variant="success")
+                yield Button("Cancel", id="cancel", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "confirm":
+            self.dismiss(True)
+        elif event.button.id == "cancel":
+            self.dismiss(False)
+
+    def on_key(self, event) -> None:
+        if event.key == "enter":
+            self.dismiss(True)
+            event.stop()
+        elif event.key == "escape":
+            self.dismiss(False)
+
+
 class RowDetailScreen(ModalScreen):
     """Modal screen to display a single row's details."""
 
     BINDINGS = [
-        ("q", "app.pop_screen", "Close"),
+        ("q,escape", "app.pop_screen", "Close"),
     ]
 
     CSS = """
@@ -117,10 +248,11 @@ class DataFrameViewer(App):
         ("c", "copy_cell", "Copy Cell"),
     ]
 
-    def __init__(self, df: pl.DataFrame):
+    def __init__(self, df: pl.DataFrame, filename: str = ""):
         super().__init__()
         self.dataframe = df  # Original dataframe
         self.df = df  # Internal dataframe
+        self.filename = filename
         self.loaded_rows = 0  # Track how many rows are currently loaded
         self.total_rows = len(df)
         self.sorted_columns = {}  # Track sort keys as dict of col_name -> descending
@@ -176,6 +308,9 @@ class DataFrameViewer(App):
             self.log(f"{self.table.show_row_labels = }")
 
             self.notify("Restored original display", title="Reset")
+        elif event.key == "s":
+            # Save dataframe to CSV
+            self._save_to_file()
 
     def on_mouse_scroll_down(self, event) -> None:
         """Load more rows when scrolling down with mouse."""
@@ -321,6 +456,9 @@ class DataFrameViewer(App):
         if col_to_remove in self.sorted_columns:
             del self.sorted_columns[col_to_remove]
 
+        # Remove from dataframe view
+        self.df = self.df.drop(col_to_remove)
+
         self.notify(
             f"Removed column [on $primary]{col_to_remove}[/] from display",
             title="Column",
@@ -387,6 +525,52 @@ class DataFrameViewer(App):
         )
         self.notify(f"Sorted by {sort_by}", title="Sort")
 
+    def _save_to_file(self) -> None:
+        """Open save file dialog."""
+        self.push_screen(
+            SaveFileScreen(self.filename or "dataframe.csv"),
+            callback=self._on_save_file_screen,
+        )
+
+    def _on_save_file_screen(self, filename: str | None) -> None:
+        """Handle result from SaveFileScreen."""
+        if filename is None:
+            return
+
+        # Check if file exists
+        if os.path.exists(filename):
+            self.push_screen(
+                OverwriteFileScreen(filename), callback=self._on_overwrite_screen
+            )
+            self._pending_filename = filename
+        else:
+            self._do_save(filename)
+
+    def _on_overwrite_screen(self, should_overwrite: bool) -> None:
+        """Handle result from OverwriteFileScreen."""
+        if should_overwrite:
+            self._do_save(self._pending_filename)
+        else:
+            # Go back to SaveFileScreen to allow user to enter a different name
+            self.push_screen(
+                SaveFileScreen(self._pending_filename),
+                callback=self._on_save_file_screen,
+            )
+
+    def _do_save(self, filename: str) -> None:
+        """Actually save the dataframe to a file."""
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in (".tsv", ".tab"):
+            separator = "\t"
+        else:
+            separator = ","
+        try:
+            self.df.write_csv(filename, separator=separator)
+            self.filename = filename
+            self.notify(f"Saved to {filename}", title="Save")
+        except Exception as e:
+            self.notify(f"Failed to save: {str(e)}", title="Error")
+
 
 if __name__ == "__main__":
     import argparse
@@ -401,6 +585,7 @@ if __name__ == "__main__":
     parser.add_argument("file", nargs="?", help="CSV file to view (or read from stdin)")
 
     args = parser.parse_args()
+    filename = ""
 
     # Check if reading from stdin (pipe or redirect)
     if not sys.stdin.isatty():
@@ -419,5 +604,5 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Run the app
-    app = DataFrameViewer(df)
+    app = DataFrameViewer(df, filename)
     app.run()
