@@ -201,14 +201,12 @@ class RowDetailScreen(ModalScreen):
 
     def __init__(
         self,
-        columns: list[str],
-        row_values: list,
-        dtypes: list,
+        row_idx: int,
+        df: pl.DataFrame,
     ):
         super().__init__()
-        self.columns = columns
-        self.row_values = row_values
-        self.dtypes = dtypes
+        self.row_idx = row_idx
+        self.df = df
 
     def on_key(self, event) -> None:
         """Handle key events."""
@@ -224,8 +222,10 @@ class RowDetailScreen(ModalScreen):
         detail_table.add_column("Column")
         detail_table.add_column("Value")
 
-        # Add rows for each column with color based on dtype
-        for col, val, dtype in zip(self.columns, self.row_values, self.dtypes):
+        # Get all columns and values from the dataframe row
+        for col, val, dtype in zip(
+            self.df.columns, self.df.row(self.row_idx), self.df.dtypes
+        ):
             detail_table.add_row(
                 *_format_row([col, val], [None, dtype], apply_justify=False)
             )
@@ -252,18 +252,19 @@ class FrequencyScreen(ModalScreen):
     }
     """
 
-    def __init__(self, column: str, dtype: pl.DataType, df: pl.DataFrame):
+    def __init__(self, column: str, df: pl.DataFrame):
         super().__init__()
         self.column = column
-        self.dtype = dtype
         self.df = df
 
     def compose(self) -> ComposeResult:
         """Create the frequency table."""
-        column_style = STYLES.get(str(self.dtype), {"style": "", "justify": ""})
+        column_dtype = str(self.df.schema[self.column])
+        column_style_config = STYLES.get(column_dtype, {"style": "", "justify": ""})
+
         # Create frequency table
         freq_table = DataTable(zebra_stripes=True)
-        freq_table.add_column(Text(self.column, justify=column_style["justify"]))
+        freq_table.add_column(Text(self.column, justify=column_style_config["justify"]))
         freq_table.add_column(Text("Count", justify="right"))
         freq_table.add_column(Text("%", justify="right"))
 
@@ -286,8 +287,8 @@ class FrequencyScreen(ModalScreen):
             freq_table.add_row(
                 Text(
                     str(value) if value is not None else "-",
-                    style=column_style["style"],
-                    justify=column_style["justify"],
+                    style=column_style_config["style"],
+                    justify=column_style_config["justify"],
                 ),
                 Text(
                     str(count),
@@ -497,19 +498,8 @@ class DataFrameViewer(App):
         if row_idx >= self.total_rows:
             return
 
-        columns, vals, dtypes = [], [], []
-        # Get the row data from the dataframe
-        for val, col, dtype in zip(
-            self.df.row(row_idx), self.df.columns, self.df.dtypes
-        ):
-            if col not in self.visible_columns:
-                continue
-            columns.append(col)
-            vals.append(val)
-            dtypes.append(dtype)
-
         # Push the modal screen
-        self.push_screen(RowDetailScreen(columns, vals, dtypes))
+        self.push_screen(RowDetailScreen(row_idx, self.df))
 
     def _remove_current_column(self) -> None:
         """Remove the currently selected column from the table."""
@@ -652,10 +642,9 @@ class DataFrameViewer(App):
             return
 
         col_name = self.visible_columns[col_idx]
-        col_dtype = self.df.schema[col_name]
 
         # Push the frequency modal screen
-        self.push_screen(FrequencyScreen(col_name, col_dtype, self.df))
+        self.push_screen(FrequencyScreen(col_name, self.df))
 
 
 if __name__ == "__main__":
