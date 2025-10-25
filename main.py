@@ -7,7 +7,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Label, Static
 
 STYLES = {
     "Int64": {"style": "cyan", "justify": "right"},
@@ -51,15 +51,21 @@ def _format_row(vals, dtypes, apply_justify=True) -> list[Text]:
     return formatted_row
 
 
-class SaveFileScreen(ModalScreen):
-    """Modal screen to save the dataframe to a CSV file."""
+class YesNoScreen(ModalScreen):
+    """Reusable modal screen with Yes/No buttons and customizable label and input.
+
+    This widget handles:
+    - Yes/No button responses
+    - Enter key for Yes, Escape for No
+    - Optional callback function for Yes action
+    """
 
     CSS = """
-    SaveFileScreen {
+    YesNoScreen {
         align: center middle;
     }
 
-    SaveFileScreen > Static {
+    YesNoScreen > Static {
         width: 60;
         height: auto;
         border: solid $primary;
@@ -67,33 +73,54 @@ class SaveFileScreen(ModalScreen):
         padding: 2;
     }
 
-    SaveFileScreen Input {
+    YesNoScreen Input {
         margin: 1 0;
     }
 
-    SaveFileScreen #button-container {
+    YesNoScreen #button-container {
         width: 100%;
         height: 3;
         align: center middle;
     }
 
-    SaveFileScreen Button {
+    YesNoScreen Button {
         margin: 0 1;
     }
     """
 
-    def __init__(self, filename: str = "dataframe.csv"):
+    def __init__(
+        self,
+        title: str = None,
+        label: str = None,
+        input: str = None,
+        on_yes_callback=None,
+    ):
+        """Initialize the modal screen.
+
+        Args:
+            title: The title to display in the border
+            label: Optional label to display below title as a Label
+            input: Optional input value to pre-fill an Input widget
+            on_yes_callback: Optional callable that takes no args and returns the value to dismiss with
+        """
         super().__init__()
-        self.filename = filename
+        self.modal_title = title
+        self.modal_label = label
+        self.modal_input = input
+        self.on_yes_callback = on_yes_callback
 
     def compose(self) -> ComposeResult:
-        with Static(id="save-container") as container:
-            container.border_title = "Save DataFrame"
+        with Static(id="modal-container") as container:
+            if self.modal_title:
+                container.border_title = self.modal_title
 
-            self.filename_input = Input(value=self.filename, id="input")
-            self.filename_input.value = self.filename
-            self.filename_input.select_all()
-            yield self.filename_input
+            if self.modal_label:
+                yield Label(self.modal_label, id="label")
+
+            if self.modal_input:
+                self.input = Input(value=self.modal_input, id="input")
+                self.input.select_all()
+                yield self.input
 
             with Horizontal(id="button-container"):
                 yield Button("Yes", id="yes", variant="success")
@@ -101,73 +128,64 @@ class SaveFileScreen(ModalScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "yes":
-            filename = self.filename_input.value.strip()
-            if filename:
-                self.dismiss(filename)
-            else:
-                self.app.notify("Filename cannot be empty", title="Error")
+            self._handle_yes()
         elif event.button.id == "no":
             self.dismiss(None)
-
-    def on_key(self, event):
-        if event.key == "enter":
-            filename = self.filename_input.value.strip()
-            if filename:
-                self.dismiss(filename)
-            else:
-                self.app.notify("Filename cannot be empty", title="Error")
-            event.stop()
-        elif event.key == "escape":
-            self.dismiss(None)
-
-
-class OverwriteFileScreen(ModalScreen):
-    """Modal screen to confirm file overwrite."""
-
-    CSS = """
-    OverwriteFileScreen {
-        align: center middle;
-    }
-
-    OverwriteFileScreen > Static {
-        width: 60;
-        height: auto;
-        border: solid $primary;
-        background: $surface;
-        padding: 2;
-    }
-
-    OverwriteFileScreen #button-container {
-        width: 100%;
-        height: 3;
-        margin-top: 1;
-        align: center middle;
-    }
-
-    OverwriteFileScreen Button {
-        margin: 0 1;
-    }
-    """
-
-    def compose(self) -> ComposeResult:
-        with Static(id="overwrite-container") as container:
-            container.border_title = "File already exists. Overwrite?"
-            with Horizontal(id="button-container"):
-                yield Button("Yes", id="yes", variant="success")
-                yield Button("No", id="no", variant="error")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "yes":
-            self.dismiss(True)
-        elif event.button.id == "no":
-            self.dismiss(False)
 
     def on_key(self, event) -> None:
         if event.key == "enter":
-            self.dismiss(True)
+            self._handle_yes()
             event.stop()
         elif event.key == "escape":
-            self.dismiss(False)
+            self.dismiss(None)
+            event.stop()
+
+    def _handle_yes(self) -> None:
+        """Handle Yes button/Enter key press."""
+        if self.on_yes_callback:
+            result = self.on_yes_callback()
+            self.dismiss(result)
+        else:
+            self.dismiss(True)
+
+
+class SaveFileScreen(YesNoScreen):
+    """Modal screen to save the dataframe to a CSV file."""
+
+    CSS = YesNoScreen.CSS.replace("YesNoScreen", "SaveFileScreen")
+
+    def __init__(self, filename: str = "dataframe.csv"):
+        super().__init__(
+            title="Save DataFrame",
+            input=filename,
+            on_yes_callback=self.handle_save,
+        )
+
+    def handle_save(self):
+        if self.input:
+            filename_input = self.input.value.strip()
+            if filename_input:
+                return filename_input
+            else:
+                self.notify("Filename cannot be empty", title="Error")
+                return None
+        return None
+
+
+class OverwriteFileScreen(YesNoScreen):
+    """Modal screen to confirm file overwrite."""
+
+    CSS = YesNoScreen.CSS.replace("YesNoScreen", "OverwriteFileScreen")
+
+    def __init__(self, filename: str):
+        self.filename = filename
+        super().__init__(
+            title="File already exists. Overwrite?",
+            on_yes_callback=self.handle_overwrite,
+        )
+
+    def handle_overwrite(self) -> None:
+        self.dismiss((True, self.filename))
 
 
 class RowDetailScreen(ModalScreen):
@@ -293,36 +311,10 @@ class FrequencyScreen(ModalScreen):
         yield freq_table
 
 
-class EditCellScreen(ModalScreen):
+class EditCellScreen(YesNoScreen):
     """Modal screen to edit a single cell value."""
 
-    CSS = """
-    EditCellScreen {
-        align: center middle;
-    }
-
-    EditCellScreen > Static {
-        width: 60;
-        height: auto;
-        border: solid $primary;
-        background: $surface;
-        padding: 2;
-    }
-
-    EditCellScreen Input {
-        margin: 1 0;
-    }
-
-    EditCellScreen #button-container {
-        width: 100%;
-        height: 3;
-        align: center middle;
-    }
-
-    EditCellScreen Button {
-        margin: 0 1;
-    }
-    """
+    CSS = YesNoScreen.CSS.replace("YesNoScreen", "EditCellScreen")
 
     def __init__(self, row_idx: int, col_idx: int, df: pl.DataFrame):
         super().__init__()
@@ -333,44 +325,19 @@ class EditCellScreen(ModalScreen):
         self.col_dtype = df.dtypes[col_idx]
         self.original_value = df.item(row_idx, col_idx)
 
-    def compose(self) -> ComposeResult:
-        with Static(id="edit-container") as container:
-            container.border_title = "Edit Cell"
+        content = f"{self.col_name} ({self.col_dtype})"
+        input = str(self.original_value) if self.original_value is not None else ""
 
-            # Display column info
-            info_text = f"{self.col_name} ({self.col_dtype})"
-            yield Static(info_text, id="info")
-
-            # Input field with original value
-            self.edit_input = Input(
-                value=str(self.original_value)
-                if self.original_value is not None
-                else ""
-            )
-            self.edit_input.select_all()
-            yield self.edit_input
-
-            with Horizontal(id="button-container"):
-                yield Button("Yes", id="yes", variant="success")
-                yield Button("No", id="no", variant="error")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "yes":
-            self._save_edit()
-        elif event.button.id == "no":
-            self.dismiss(None)
-
-    def on_key(self, event) -> None:
-        if event.key == "enter":
-            self._save_edit()
-            event.stop()
-        elif event.key == "escape":
-            self.dismiss(None)
-            event.stop()
+        super().__init__(
+            title="Edit Cell",
+            label=content,
+            input=input,
+            on_yes_callback=self._save_edit,
+        )
 
     def _save_edit(self) -> None:
         """Validate and save the edited value."""
-        new_value_str = self.edit_input.value.strip()
+        new_value_str = self.input.value.strip()
 
         # Check if value changed
         old_value_str = (
@@ -378,13 +345,15 @@ class EditCellScreen(ModalScreen):
         )
         if new_value_str == old_value_str:
             self.dismiss(None)
+            self.notify("No changes made", title="Edit")
             return
 
         # Parse and validate based on column dtype
         try:
             new_value = self._parse_value(new_value_str)
         except ValueError as e:
-            self.app.notify(f"Invalid value: {str(e)}", title="Error")
+            self.dismiss(None)
+            self.notify(f"Invalid value: {str(e)}", title="Error")
             return
 
         # Dismiss with the new value
@@ -425,81 +394,25 @@ class EditCellScreen(ModalScreen):
             return value_str
 
 
-class SearchScreen(ModalScreen):
+class SearchScreen(YesNoScreen):
     """Modal screen to search for values in a column."""
 
-    CSS = """
-    SearchScreen {
-        align: center middle;
-    }
-
-    SearchScreen > Static {
-        width: 60;
-        height: auto;
-        border: solid $primary;
-        background: $surface;
-        padding: 2;
-    }
-
-    SearchScreen Input {
-        margin: 1 0;
-    }
-
-    SearchScreen #button-container {
-        width: 100%;
-        height: 3;
-        align: center middle;
-    }
-
-    SearchScreen Button {
-        margin: 0 1;
-    }
-    """
+    CSS = YesNoScreen.CSS.replace("YesNoScreen", "SearchScreen")
 
     def __init__(self, col_name: str, default_value: str = ""):
-        super().__init__()
-        self.col_name = col_name
-        self.default_value = default_value
-
-    def compose(self) -> ComposeResult:
-        with Static(id="search-container") as container:
-            container.border_title = "Search"
-
-            # Display column info
-            info_text = f"Search in: {self.col_name}"
-            yield Static(info_text, id="info")
-
-            # Input field for search term with default value
-            self.search_input = Input(
-                value=self.default_value, placeholder="Enter search term..."
-            )
-            self.search_input.select_all()
-            yield self.search_input
-
-            with Horizontal(id="button-container"):
-                yield Button("Yes", id="yes", variant="success")
-                yield Button("No", id="no", variant="error")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "yes":
-            self._do_search()
-        elif event.button.id == "no":
-            self.dismiss(None)
-
-    def on_key(self, event) -> None:
-        if event.key == "enter":
-            self._do_search()
-            event.stop()
-        elif event.key == "escape":
-            self.dismiss(None)
-            event.stop()
+        super().__init__(
+            title="Search",
+            label=f"Search in: {col_name}",
+            input=default_value,
+            on_yes_callback=self._do_search,
+        )
 
     def _do_search(self) -> None:
         """Perform the search."""
-        search_term = self.search_input.value.strip()
+        search_term = self.input.value.strip()
 
         if not search_term:
-            self.app.notify("Search term cannot be empty", title="Error")
+            self.notify("Search term cannot be empty", title="Error")
             return
 
         # Dismiss with the search term
@@ -809,18 +722,17 @@ class DataFrameViewer(App):
             self.push_screen(
                 OverwriteFileScreen(filename), callback=self._on_overwrite_screen
             )
-            self._pending_filename = filename
         else:
             self._do_save(filename)
 
-    def _on_overwrite_screen(self, should_overwrite: bool) -> None:
+    def _on_overwrite_screen(self, should_overwrite: bool, filename: str) -> None:
         """Handle result from OverwriteFileScreen."""
         if should_overwrite:
-            self._do_save(self._pending_filename)
+            self._do_save(filename)
         else:
             # Go back to SaveFileScreen to allow user to enter a different name
             self.push_screen(
-                SaveFileScreen(self._pending_filename),
+                SaveFileScreen(filename),
                 callback=self._on_save_file_screen,
             )
 
@@ -898,7 +810,7 @@ class DataFrameViewer(App):
 
             self.notify(f"Cell updated to [on $primary]{cell_value}[/]", title="Edit")
         except Exception as e:
-            self.app.notify(f"Failed to update cell: {str(e)}", title="Error")
+            self.notify(f"Failed to update cell: {str(e)}", title="Error")
 
     def _search_column(self) -> None:
         """Open modal to search in the selected column."""
@@ -955,7 +867,7 @@ class DataFrameViewer(App):
                 title="Search",
             )
         except Exception as e:
-            self.app.notify(f"Search failed: {str(e)}", title="Error")
+            self.notify(f"Search failed: {str(e)}", title="Error")
 
     def _highlight_rows(self, rm_unselected: bool = False) -> int:
         """Update all rows, highlighting selected ones in red and restoring others to default.
