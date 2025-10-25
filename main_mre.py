@@ -53,6 +53,7 @@ class DataFrameViewer(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("t", "toggle_row_labels", "Toggle Row Labels"),
+        ("r", "setup_table", "Reset Table"),
     ]
 
     def __init__(self, df: pl.DataFrame):
@@ -68,19 +69,13 @@ class DataFrameViewer(App):
 
     def on_mount(self) -> None:
         """Set up the DataTable when app starts."""
-        self._setup_table()
-
-    def on_key(self, event) -> None:
-        """Handle key events."""
-        # Restore original display
-        if event.key == "r":
-            self._setup_table()
+        self.action_setup_table()
 
     def action_toggle_row_labels(self) -> None:
         """Toggle row labels visibility using CSS property."""
         self.table.show_row_labels = not self.table.show_row_labels
 
-    def _setup_table(self) -> None:
+    def action_setup_table(self) -> None:
         """Setup the table for display."""
         # Reset to original dataframe
         self.df = self.dataframe
