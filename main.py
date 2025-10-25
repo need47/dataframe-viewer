@@ -177,15 +177,14 @@ class OverwriteFileScreen(YesNoScreen):
 
     CSS = YesNoScreen.CSS.replace("YesNoScreen", "OverwriteFileScreen")
 
-    def __init__(self, filename: str):
-        self.filename = filename
+    def __init__(self):
         super().__init__(
             title="File already exists. Overwrite?",
             on_yes_callback=self.handle_overwrite,
         )
 
     def handle_overwrite(self) -> None:
-        self.dismiss((True, self.filename))
+        self.dismiss(True)
 
 
 class RowDetailScreen(ModalScreen):
@@ -429,7 +428,7 @@ class DataFrameViewer(App):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
-        ("d", "toggle_dark", "Toggle Dark Mode"),
+        ("k", "toggle_dark", "Toggle Dark Mode"),
         ("l", "toggle_row_labels", "Toggle Row Labels"),
         ("c", "copy_cell", "Copy Cell"),
     ]
@@ -519,6 +518,9 @@ class DataFrameViewer(App):
 
             # Display only selected rows and update the internal dataframe
             self._highlight_rows(rm_unselected=True)
+        elif event.key == "d":
+            # Delete the current row
+            self._delete_row()
 
     def on_mouse_scroll_down(self, event) -> None:
         """Load more rows when scrolling down with mouse."""
@@ -719,20 +721,19 @@ class DataFrameViewer(App):
 
         # Check if file exists
         if os.path.exists(filename):
-            self.push_screen(
-                OverwriteFileScreen(filename), callback=self._on_overwrite_screen
-            )
+            self._pending_filename = filename
+            self.push_screen(OverwriteFileScreen(), callback=self._on_overwrite_screen)
         else:
             self._do_save(filename)
 
-    def _on_overwrite_screen(self, should_overwrite: bool, filename: str) -> None:
+    def _on_overwrite_screen(self, should_overwrite: bool) -> None:
         """Handle result from OverwriteFileScreen."""
         if should_overwrite:
-            self._do_save(filename)
+            self._do_save(self._pending_filename)
         else:
             # Go back to SaveFileScreen to allow user to enter a different name
             self.push_screen(
-                SaveFileScreen(filename),
+                SaveFileScreen(self._pending_filename),
                 callback=self._on_save_file_screen,
             )
 
@@ -955,6 +956,33 @@ class DataFrameViewer(App):
 
         # Refresh the highlighting (also restores default styles for unselected rows)
         self._highlight_rows()
+
+    def _delete_row(self) -> None:
+        """Delete the current row from the table and dataframe."""
+        row_idx = self.table.cursor_row
+
+        if row_idx >= len(self.df):
+            self.notify("Cannot delete row: invalid row index", title="Error")
+            return
+
+        # Get the row key for removal from table
+        row_key = str(row_idx + 1)
+
+        # Remove from table
+        self.table.remove_row(row_key)
+
+        # Remove from dataframe
+        self.df = self.df.slice(0, row_idx).vstack(self.df.slice(row_idx + 1))
+
+        # Update selected_rows list to maintain alignment
+        if row_idx < len(self.selected_rows):
+            self.selected_rows.pop(row_idx)
+
+        # Adjust loaded_rows counter
+        if self.loaded_rows > 0:
+            self.loaded_rows -= 1
+
+        self.notify(f"Row [on $primary]{row_idx + 1}[/] deleted", title="Delete")
 
 
 if __name__ == "__main__":
