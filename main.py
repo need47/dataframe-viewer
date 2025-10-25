@@ -1,5 +1,6 @@
 import os
 import sys
+from dataclasses import dataclass
 from io import StringIO
 
 import polars as pl
@@ -19,6 +20,17 @@ STYLES = {
 }
 
 
+@dataclass
+class DtypeStyle:
+    style: str
+    justify: str
+
+    def __init__(self, dtype: pl.DataType):
+        ds = STYLES.get(str(dtype), {"style": "", "justify": ""})
+        self.style = ds["style"]
+        self.justify = ds["justify"]
+
+
 def _format_row(vals, dtypes, apply_justify=True) -> list[Text]:
     """Format a single row with proper styling and justification.
 
@@ -30,7 +42,7 @@ def _format_row(vals, dtypes, apply_justify=True) -> list[Text]:
     formatted_row = []
 
     for val, dtype in zip(vals, dtypes, strict=True):
-        style_config = STYLES.get(str(dtype), {"style": "", "justify": ""})
+        ds = DtypeStyle(dtype)
 
         # Format the value
         if val is None:
@@ -43,8 +55,8 @@ def _format_row(vals, dtypes, apply_justify=True) -> list[Text]:
         formatted_row.append(
             Text(
                 text_val,
-                style=style_config["style"],
-                justify=style_config["justify"] if apply_justify else "",
+                style=ds.style,
+                justify=ds.justify if apply_justify else "",
             )
         )
 
@@ -267,11 +279,11 @@ class FrequencyScreen(ModalScreen):
         """Create the frequency table."""
         column = self.df.columns[self.col_idx]
         dtype = str(self.df.dtypes[self.col_idx])
-        column_style_config = STYLES.get(dtype, {"style": "", "justify": ""})
+        ds = DtypeStyle(dtype)
 
         # Create frequency table
         freq_table = DataTable(zebra_stripes=True)
-        freq_table.add_column(Text(column, justify=column_style_config["justify"]))
+        freq_table.add_column(Text(column, justify=ds.justify))
         freq_table.add_column(Text("Count", justify="right"))
         freq_table.add_column(Text("%", justify="right"))
 
@@ -281,8 +293,8 @@ class FrequencyScreen(ModalScreen):
         total_count = len(self.df)
 
         # Get style config for Int64 and Float64
-        int_style_config = STYLES.get("Int64")
-        float_style_config = STYLES.get("Float64")
+        ds_int = DtypeStyle("Int64")
+        ds_float = DtypeStyle("Float64")
 
         # Add rows to the frequency table
         for row in freq_df.rows():
@@ -291,19 +303,19 @@ class FrequencyScreen(ModalScreen):
 
             freq_table.add_row(
                 Text(
-                    str(value) if value is not None else "-",
-                    style=column_style_config["style"],
-                    justify=column_style_config["justify"],
+                    "-" if value is None else str(value),
+                    style=ds.style,
+                    justify=ds.justify,
                 ),
                 Text(
                     str(count),
-                    style=int_style_config["style"],
-                    justify=int_style_config["justify"],
+                    style=ds_int.style,
+                    justify=ds_int.justify,
                 ),
                 Text(
                     f"{percentage:.2f}",
-                    style=float_style_config["style"],
-                    justify=float_style_config["justify"],
+                    style=ds_float.style,
+                    justify=ds_float.justify,
                 ),
             )
 
@@ -572,8 +584,7 @@ class DataFrameViewer(App):
 
         # Add columns with justified headers
         for col, dtype in zip(self.df.columns, self.df.dtypes):
-            style_config = STYLES.get(str(dtype), {"style": "green", "justify": "left"})
-            self.table.add_column(Text(col, justify=style_config["justify"]), key=col)
+            self.table.add_column(Text(col, justify=DtypeStyle(dtype).justify), key=col)
 
         self.table.cursor_type = "cell"
         self.table.focus()
@@ -796,12 +807,8 @@ class DataFrameViewer(App):
             # Update the display
             cell_value = self.df.item(row_idx, col_idx)
             dtype = self.df.dtypes[col_idx]
-            style_config = STYLES.get(str(dtype), {"style": "", "justify": ""})
-            formatted_value = Text(
-                str(cell_value),
-                style=style_config["style"],
-                justify=style_config["justify"],
-            )
+            ds = DtypeStyle(dtype)
+            formatted_value = Text(str(cell_value), style=ds.style, justify=ds.justify)
 
             row_key = str(row_idx + 1)
             col_key = str(col_name)
@@ -899,16 +906,15 @@ class DataFrameViewer(App):
                 dtype = self.df.dtypes[col_idx]
 
                 # Get style config based on dtype
-                style_config = STYLES.get(str(dtype), {"style": "", "justify": ""})
-                justify = style_config.get("justify", "")
+                ds = DtypeStyle(dtype)
 
                 # Use red for selected rows, default style for others
-                style = "red" if is_selected else style_config.get("style", "")
+                style = "red" if is_selected else ds.style
 
                 formatted_value = Text(
                     str(cell_value) if cell_value is not None else "-",
                     style=style,
-                    justify=justify,
+                    justify=ds.justify,
                 )
 
                 row_key = str(row_idx + 1)
