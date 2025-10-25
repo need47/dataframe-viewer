@@ -853,7 +853,11 @@ class DataFrameViewer(App):
 
             # Use Polars str.contains() to find matching rows
             # Returns a boolean Series, convert to list
-            self.selected_rows = col_series.str.contains(search_term).to_list()
+            # Add to existing selected rows
+            matches = col_series.str.contains(search_term).to_list()
+            self.selected_rows = [
+                old or new for old, new in zip(self.selected_rows, matches)
+            ]
 
             # Highlight selected rows and get count
             match_count = self._highlight_rows()
