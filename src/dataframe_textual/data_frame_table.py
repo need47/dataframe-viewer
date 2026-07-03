@@ -259,7 +259,7 @@ class DataFrameTable(DataTable):
         # Per-column float precision: col_name -> number of decimal places
         self.float_precision_columns: dict[str, int] = {}
 
-        # Per-column width overrides: col_name -> display width
+        # Per-column width overrides: col_name -> display width (-1 indicates expanded width)
         self.column_widths: dict[str, int] = {}
 
         # Columns displaying as inline bar charts
@@ -668,11 +668,6 @@ class DataFrameTable(DataTable):
     def hidden_columns(self) -> set[str]:
         """Get columns hidden through the column width state."""
         return {col for col, width in self.column_widths.items() if width == 0}
-
-    @property
-    def expanded_columns(self) -> set[str]:
-        """Get columns expanded through the column width state."""
-        return {col for col, width in self.column_widths.items() if width == -1}
 
     @property
     def ordered_selected_rows(self) -> list[int]:
@@ -2407,7 +2402,7 @@ class DataFrameTable(DataTable):
         label_width = self._column_label_width(col_name)
 
         # If already expanded, shrink back
-        if col_name in self.expanded_columns:
+        if self.column_widths.get(col_name) == -1:
             col.width = label_width
             self.column_widths.pop(col_name, None)
             return f"[$success]{col_name}[/] shrunk to [$accent]{col.width}[/]"
@@ -2419,7 +2414,17 @@ class DataFrameTable(DataTable):
 
             for row_start, row_end in self.loaded_ranges:
                 for ridx in range(row_start, row_end):
-                    cell_value = str(self.df.item(ridx, cidx))
+                    cell = self.df.item(ridx, cidx)
+                    if cell is None:
+                        # Null cells render as the null placeholder, not "None".
+                        cell_value = NULL_DISPLAY
+                    elif isinstance(cell, pl.Series):
+                        # Polars returns list scalars as a Series; measure the
+                        # compact list text that is actually shown in the cell.
+                        cell_value = str(cell.to_list())
+                    else:
+                        cell_value = str(cell)
+
                     cell_width = measure(self.app.console, cell_value, 1)
                     if cell_width > new_width:
                         need_expand = True
@@ -2428,7 +2433,7 @@ class DataFrameTable(DataTable):
             if not need_expand:
                 return None
 
-            self.column_widths[col_name] = -1
+            self.column_widths[col_name] = -1  # Mark as expanded
             col.width = new_width
             return f"[$success]{col_name}[/] expanded to [$accent]{new_width}[/]"
 
