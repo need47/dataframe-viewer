@@ -1177,6 +1177,8 @@ class DataFrameTable(DataTable):
     def cmd_toggle_thousand_separator(self) -> None:
         """Toggle thousand separator for the current cursor column."""
         col_name = self.cursor_col_name
+        self.add_history(f"Toggle thousand separator for column [$accent]{col_name}[/]")
+
         if col_name in self.thousand_separator_columns:
             self.thousand_separator_columns.discard(col_name)
             status = "off"
@@ -1193,6 +1195,7 @@ class DataFrameTable(DataTable):
                     severity="warning",
                 )
                 return
+
         self.setup_table()
         self.notify(
             f"Thousand separator is [$success]{status}[/] for column [$accent]{col_name}[/]",
@@ -1245,11 +1248,37 @@ class DataFrameTable(DataTable):
         )
         self.notify(message, title="Set Float Precision")
 
+    def _build_column_label(self, col_name: str, visible_col_idx: int | None = None) -> str:
+        """Build display label for a column header.
+
+        Args:
+            col_name: Source dataframe column name.
+            visible_col_idx: 1-based index of the column among visible columns.
+
+        Returns:
+            Column label text with optional index prefix and sort indicator.
+        """
+        label = col_name
+        if self.show_column_index:
+            label = f"{visible_col_idx or self.cursor_column + 1}_{label}"
+
+        for idx, c in enumerate(self.sorted_columns, 1):
+            if c == col_name:
+                # Add sort indicator to column header
+                descending = self.sorted_columns[col_name]
+                sort_indicator = (
+                    f" ▼{SUBSCRIPT_DIGITS.get(idx, '')}" if descending else f" ▲{SUBSCRIPT_DIGITS.get(idx, '')}"
+                )
+                label = col_name + sort_indicator
+                break
+
+        return label
+
     def _column_label_width(self, col_name: str) -> int:
         """Measure the display width needed for a column label."""
         visible_col_idx = list(self.visible_columns).index(col_name) + 1
         label = self._build_column_label(col_name, visible_col_idx)
-        return measure(self.app.console, label, 1) + 2
+        return measure(self.app.console, label, 1)
 
     def resize_column(self, col_name: str, result: str | None) -> None:
         """Set the display width for a column from user input.
@@ -1372,10 +1401,9 @@ class DataFrameTable(DataTable):
         sample_lf = self.df.lazy().head(sample_size)
 
         # ── Phase 1: initial width for every visible column ───────────────────
-        for col_idx, (col, dtype) in enumerate(self.visible_columns.items(), 1):
+        for col, dtype in self.visible_columns.items():
             # Label width is the hard minimum
-            label_text = self._build_column_label(col, col_idx)
-            label_width = measure(self.app.console, label_text, 1)
+            label_width = self._column_label_width(col)
             col_label_widths[col] = label_width
 
             # Bar columns: already fixed
@@ -1477,38 +1505,12 @@ class DataFrameTable(DataTable):
 
         # Add columns with justified headers
         for col_idx, (col, dtype) in enumerate(self.visible_columns.items(), 1):
-            cell_value = self._build_column_label(col, col_idx)
+            label = self._build_column_label(col, col_idx)
 
             # Get the width for this column (None means auto-size)
             width = column_widths.get(col)
 
-            self.add_column(Text(cell_value, justify=DtypeConfig(dtype).justify), key=col, width=width)
-
-    def _build_column_label(self, col_name: str, visible_col_idx: int | None = None) -> str:
-        """Build display label for a column header.
-
-        Args:
-            col_name: Source dataframe column name.
-            visible_col_idx: 1-based index of the column among visible columns.
-
-        Returns:
-            Column label text with optional index prefix and sort indicator.
-        """
-        label = col_name
-        if self.show_column_index:
-            label = f"{visible_col_idx or self.cursor_column + 1}_{label}"
-
-        for idx, c in enumerate(self.sorted_columns, 1):
-            if c == col_name:
-                # Add sort indicator to column header
-                descending = self.sorted_columns[col_name]
-                sort_indicator = (
-                    f" ▼{SUBSCRIPT_DIGITS.get(idx, '')}" if descending else f" ▲{SUBSCRIPT_DIGITS.get(idx, '')}"
-                )
-                label = col_name + sort_indicator
-                break
-
-        return label
+            self.add_column(Text(label, justify=DtypeConfig(dtype).justify), key=col, width=width)
 
     def _calculate_load_range(self, start: int, stop: int) -> list[tuple[int, int]]:
         """Calculate the actual ranges to load, accounting for already-loaded ranges.
@@ -2305,7 +2307,9 @@ class DataFrameTable(DataTable):
     def cmd_toggle_freeze(self) -> None:
         """Toggle the freeze."""
         if self.fixed_rows or self.fixed_columns:
+            self.add_history("Unfreeze all rows and columns")
             self.fixed_rows = self.fixed_columns = 0
+            self.setup_table()
             self.notify("Unfreezed all rows and columns", title="Freeze Row/Column")
         else:
             self.app.push_screen(FreezeScreen(), callback=self.toggle_freeze_row_column)
@@ -2400,11 +2404,11 @@ class DataFrameTable(DataTable):
             return None
         col: Column = self.columns[col_key]
 
-        label_width = len(self._build_column_label(col_name)) + 2
+        label_width = self._column_label_width(col_name)
 
         # If already expanded, shrink back
         if col_name in self.expanded_columns:
-            col.width = max(label_width, COLUMN_WIDTH_CAP)
+            col.width = label_width
             self.column_widths.pop(col_name, None)
             return f"[$success]{col_name}[/] shrunk to [$accent]{col.width}[/]"
 
@@ -2450,8 +2454,7 @@ class DataFrameTable(DataTable):
 
             results = []
             for col_name in target_cols:
-                result = self._expand_single_column(col_name)
-                if result:
+                if result := self._expand_single_column(col_name):
                     results.append(result)
 
             if not results:
@@ -2471,8 +2474,8 @@ class DataFrameTable(DataTable):
                 return
 
             col_name = self.cursor_col_key.value
-            result = self._expand_single_column(col_name)
-            if not result:
+
+            if not (result := self._expand_single_column(col_name)):
                 return
 
             self._update_count += 1
@@ -2729,7 +2732,7 @@ class DataFrameTable(DataTable):
 
             # Expand column width if new content is wider than the explicit width set during setup
             col = self.columns[col_key]
-            new_content_width = measure(self.app.console, str(display_value), 1) + 2
+            new_content_width = measure(self.app.console, str(display_value), 1)
             if col.width is not None and new_content_width > col.width:
                 col.width = new_content_width
 
