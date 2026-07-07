@@ -3414,6 +3414,7 @@ class DataFrameTable(DataTable):
             self.log(f"Error gluing list column `{col_name}`: {e}")
 
     @with_full_df
+    @with_busy_screen
     def cmd_expand_list_column(self) -> None:
         """Expand the current list column into multiple indexed columns.
 
@@ -3489,6 +3490,7 @@ class DataFrameTable(DataTable):
             self.log(f"Error expanding list column `{col_name}`: {e}")
 
     @with_full_df
+    @with_busy_screen
     def cmd_contract_list_column(self) -> None:
         """Contract indexed sibling columns back into a single list column.
 
@@ -3663,6 +3665,7 @@ class DataFrameTable(DataTable):
             self.log(f"Error adding link column: {e}")
 
     @with_full_df
+    @with_busy_screen
     def cmd_delete_column(self, more: str | None = None, col_name: str | None = None) -> None:
         """Remove selected columns when present, otherwise the current column.
 
@@ -3887,6 +3890,7 @@ class DataFrameTable(DataTable):
             self.log(f"Error exploding column `{col_name}` `{delimiter}`: {e}")
 
     @with_full_df
+    @with_busy_screen
     def cmd_delete_row(self, more: str | None = None) -> None:
         """Delete rows from the table and dataframe.
 
