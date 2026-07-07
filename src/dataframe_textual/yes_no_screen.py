@@ -13,6 +13,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.events import Key
 from textual.screen import ModalScreen
+from textual.validation import ValidationResult, Validator
 from textual.widgets import (
     Button,
     Checkbox,
@@ -31,6 +32,16 @@ from textual.widgets.tabbed_content import ContentTab
 from .commands import Scope
 from .common import NULL, RID, DtypeClass, DtypeConfig, tentative_expr, validate_expr
 from .keybindings import KeyBinding, format_key_display, parse_key_display
+
+
+class NonEmptyValueValidator(Validator):
+    """Validator that rejects empty or whitespace-only input values."""
+
+    def validate(self, value: str) -> ValidationResult:
+        """Return success when input contains non-whitespace characters."""
+        if value.strip():
+            return self.success()
+        return self.failure("Value cannot be empty")
 
 
 class YMNScreen(ModalScreen):
@@ -716,7 +727,7 @@ class RenameColumnScreen(YesNoScreen):
         super().__init__(
             title="Rename Column",
             label=content,
-            input={"value": col_name},
+            input=Input(col_name, validators=NonEmptyValueValidator()),
             yes="Rename",
             no="Cancel",
             on_yes_callback=self._validate_input,
@@ -789,7 +800,7 @@ class AddColumnScreen(YesNoScreen):
             label="Column name",
             input="Link" if link else "New column",
             label2=label2,
-            input2="Link template" if link else "Value or Polars expression",
+            input2=Input(placeholder="Link template" if link else "Value or Polars expression"),
             yes="Add",
             no="Cancel",
             on_yes_callback=self._get_input,

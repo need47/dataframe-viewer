@@ -1019,19 +1019,19 @@ class DataFrameTable(DataTable):
 
     def cmd_find_forward_all(self) -> None:
         """Search forward in all columns with expression."""
-        self.cmd_find_forward(forward=True, scope="all")
+        self._find_value(forward=True, scope="all")
 
     def cmd_find_forward_cursor(self) -> None:
         """Search forward in current column with cursor value."""
-        self._find_cursor_direct(forward=True, scope="column")
+        self._find_cursor(forward=True, scope="column")
 
     def cmd_find_backward_all(self) -> None:
         """Search backward in all columns with expression."""
-        self.cmd_find_backward(forward=False, scope="all")
+        self._find_value(forward=False, scope="all")
 
     def cmd_find_backward_cursor(self) -> None:
         """Search backward in current column with cursor value."""
-        self._find_cursor_direct(forward=False, scope="column")
+        self._find_cursor(forward=False, scope="column")
 
     def cmd_replace_column(self) -> None:
         """Replace in current column."""
@@ -2876,12 +2876,6 @@ class DataFrameTable(DataTable):
 
         col_name, new_name = result
         col_idx = self.get_col_idx(col_name)
-        if new_name is None:
-            self.app.push_screen(
-                RenameColumnScreen(col_name, self.df.columns),
-                callback=self.rename_column,
-            )
-            return
 
         # Add to history
         self.add_history(f"Rename column [$success]{col_name}[/] to [$accent]{new_name}[/]", dirty=True)
@@ -2920,6 +2914,8 @@ class DataFrameTable(DataTable):
 
         self.notify(f"Renamed column [$success]{col_name}[/] to [$accent]{new_name}[/]", title="Rename Column")
 
+    @with_full_df
+    @with_busy_screen
     def cmd_clear_cell(self) -> None:
         """Clear the current cell by setting its value to None."""
         row_key, col_key = self.cursor_key
@@ -2969,6 +2965,8 @@ class DataFrameTable(DataTable):
             )
             self.log(f"Error clearing cell ({ridx}, {col_name}): {e}")
 
+    @with_full_df
+    @with_busy_screen
     def cmd_clear_column(self) -> None:
         """Clear cells in the current column that match the cursor value by setting them to None."""
         col_idx = self.cursor_column
@@ -3006,7 +3004,7 @@ class DataFrameTable(DataTable):
             self.notify(f"Failed to clear column [$error]{col_name}[/]", title="Clear Column", severity="error")
             self.log(f"Error clearing column `{col_name}`: {e}")
 
-    def _get_column_name(self, col_name: str) -> str:
+    def _new_column_name(self, col_name: str) -> str:
         """Get a unique column name based on the provided name."""
         if col_name not in self.df.columns:
             return col_name
@@ -3019,47 +3017,15 @@ class DataFrameTable(DataTable):
             new_col_name = f"{base_name}_{counter}"
         return new_col_name
 
-    @with_full_df
     def cmd_add_column(self, col_name: str | None = None) -> None:
         """Add acolumn after the current column."""
-        cidx = self.cursor_cidx
-
         # Generate a unique column name
         if not col_name:
-            new_col_name = self._get_column_name("new_col")
+            new_col_name = self._new_column_name("new_col")
         else:
-            new_col_name = col_name
+            new_col_name = self._new_column_name(col_name)
 
-        # Add to history
-        self.add_history(f"Add column [$success]{new_col_name}[/] after column [$accent]{cidx + 1}[/]", dirty=True)
-
-        try:
-            # Create an empty column (all None values)
-            new_col = pl.lit(None).alias(new_col_name)
-
-            # Get columns up to current, the new column, then remaining columns
-            cols = self.df.columns
-            cols_before = cols[: cidx + 1]
-            cols_after = cols[cidx + 1 :]
-
-            # Build the new dataframe with columns reordered
-            select_cols = cols_before + [new_col] + cols_after
-            self.df = self.df.lazy().with_columns(new_col).select(select_cols).collect()
-
-            # Also update the full datafram if applicable
-            if self.in_view:
-                self.dfull = self.dfull.lazy().with_columns(new_col).select(select_cols).collect()
-
-            # Recreate table for display
-            self.setup_table()
-
-            # Move cursor to the new column
-            self.move_cursor(column=cidx + 1)
-
-            self.notify(f"Added column [$success]{new_col_name}[/]", title="Add Column")
-        except Exception as e:
-            self.notify(f"Failed to add column [$error]{new_col_name}[/]", title="Add Column", severity="error")
-            self.log(f"Error adding column `{new_col_name}`: {e}")
+        self.add_column_expr((self.cursor_col_name, new_col_name, pl.lit(None)))
 
     def cmd_add_column_expr(self) -> None:
         """Open screen to add a new column with optional expression."""
@@ -3116,6 +3082,7 @@ class DataFrameTable(DataTable):
             self.log(f"Error adding column `{new_col_name}`: {e}")
 
     @with_full_df
+    @with_busy_screen
     def cmd_add_index_column(self, start: int = 1, step: int = 1) -> None:
         """Add an index column after the current column.
 
@@ -3124,7 +3091,7 @@ class DataFrameTable(DataTable):
             step: Step between values in the sequence. Defaults to 1.
         """
         cidx = self.cursor_cidx
-        new_col_name = self._get_column_name("index")
+        new_col_name = self._new_column_name("index")
 
         # Add to history
         self.add_history(
@@ -3208,7 +3175,7 @@ class DataFrameTable(DataTable):
 
         cidx = self.cursor_cidx
         col_name = self.cursor_col_name
-        new_col_name = self._get_column_name(f"{col_name}_split")
+        new_col_name = self._new_column_name(f"{col_name}_split")
 
         self.add_history(
             f"Split column [$success]{col_name}[/] into [$success]{new_col_name}[/] using delimiter [$accent]{delimiter}[/]",
@@ -3297,7 +3264,7 @@ class DataFrameTable(DataTable):
 
         cidx = self.cursor_cidx
         base_name = "_".join(ordered_selected)
-        new_col_name = self._get_column_name(base_name)
+        new_col_name = self._new_column_name(base_name)
 
         self.add_history(
             f"Join [$accent]{len(ordered_selected)}[/] columns into [$success]{new_col_name}[/] with delimiter [$accent]{delimiter}[/]",
@@ -3360,12 +3327,12 @@ class DataFrameTable(DataTable):
                 label=f"Enter the delimiter to join items of [$success]{col_name}[/] into a string",
                 input="|",
             ),
-            callback=self.glue_columns,
+            callback=self.glue_list_column,
         )
 
     @with_full_df
     @with_busy_screen
-    def glue_columns(self, result: str | None) -> None:
+    def glue_list_column(self, result: str | None) -> None:
         """Glue list items of the current column into a single string per row.
 
         Args:
@@ -3377,7 +3344,7 @@ class DataFrameTable(DataTable):
         delimiter = result  # empty string is a valid delimiter
         cidx = self.cursor_cidx
         col_name = self.cursor_col_name
-        new_col_name = self._get_column_name(f"{col_name}_glued")
+        new_col_name = self._new_column_name(f"{col_name}_glued")
 
         self.add_history(
             f"Glue list column [$success]{col_name}[/] into [$success]{new_col_name}[/] with delimiter [$accent]{delimiter}[/]",
@@ -3961,6 +3928,7 @@ class DataFrameTable(DataTable):
             self.notify(f"Deleted [$success]{deleted_count}[/] row(s)", title="Delete Row(s)")
 
     @with_full_df
+    @with_busy_screen
     def cmd_duplicate_row(self) -> None:
         """Duplicate the currently selected row, inserting it right after the current row."""
         ridx = self.cursor_ridx
@@ -3997,6 +3965,7 @@ class DataFrameTable(DataTable):
         self.notify(f"Duplicated row [$success]{ridx + 1}[/]", title="Duplicate Row")
 
     @with_full_df
+    @with_busy_screen
     def cmd_duplicate_column(self) -> None:
         """Duplicate the currently selected column, inserting it right after the current column."""
         cidx = self.cursor_cidx
@@ -4037,6 +4006,7 @@ class DataFrameTable(DataTable):
         )
 
     @with_full_df
+    @with_busy_screen
     def cmd_remove_duplicates(self) -> None:
         """Remove duplicate rows from the current dataframe, keeping the first occurrence."""
         subset = list(self.visible_columns.keys())
@@ -4299,6 +4269,8 @@ class DataFrameTable(DataTable):
 
         self.notify(f"Moved row [$success]{curr_key.value}[/] {direction}", title="Move Row")
 
+    @with_full_df
+    @with_busy_screen
     def cmd_transpose(self) -> None:
         """Transpose the dataframe, swapping rows and columns."""
         if not self.visible_columns:
@@ -4725,16 +4697,7 @@ class DataFrameTable(DataTable):
 
         return matches
 
-    def cmd_find_forward(self, forward: bool = True, scope: str = "column") -> None:
-        """Open expression search prefilled with cursor value.
-
-        Args:
-            forward: Whether to navigate forward.
-            scope: "column" or "all" (global).
-        """
-        self.cmd_find_backward(forward=forward, scope=scope)
-
-    def _find_cursor_direct(self, forward: bool = True, scope: str = "column") -> None:
+    def _find_cursor(self, forward: bool = True, scope: str = "column") -> None:
         """Search immediately using the cursor value without opening SearchScreen.
 
         Args:
@@ -4759,20 +4722,30 @@ class DataFrameTable(DataTable):
 
     def cmd_find_cursor_all(self) -> None:
         """Search the entire dataframe for the current cursor value, highlight all matches, and go to the first."""
-        self._find_cursor_direct(forward=True, scope="global")
+        self._find_cursor(forward=True, scope="global")
 
         # Move to the very first match in the dataframe
         if self.matches and self.ordered_matches:
             first_ridx, first_cidx = self.ordered_matches[0]
             self.move_cursor_to(first_ridx, first_cidx)
 
-    def cmd_find_backward(self, forward: bool = False, scope: str = "column") -> None:
+    def cmd_find_forward(self, scope: str = "column") -> None:
+        """Open expression search prefilled with cursor value.
+
+        Args:
+            scope: "column" or "all" (global).
+        """
+        self._find_value(forward=True, scope=scope)
+
+    def cmd_find_backward(self, scope: str = "column") -> None:
         """Open expression search screen.
 
         Args:
-            forward: Whether to navigate to the next match after applying results.
             scope: "column" or "all" (global).
         """
+        self._find_value(forward=False, scope=scope)
+
+    def _find_value(self, forward: bool = True, scope: str = "column") -> None:
         # Use current cell value as default search term
         term = NULL if self.cursor_value is None else str(self.cursor_value)
         col_name = self.cursor_col_name
@@ -4787,7 +4760,6 @@ class DataFrameTable(DataTable):
             callback=partial(self.find, scope=scope, forward=forward),
         )
 
-    @with_full_df
     def find(self, result: dict, scope: str = "column", forward: bool = True) -> None:
         """Find a term in current column or globally across all columns.
 
@@ -4842,8 +4814,8 @@ class DataFrameTable(DataTable):
         match_count = sum(len(cols) for cols in matches.values())
         self.matches = matches
 
-        message = f"Found [$success]{match_count}[/] matches for `[$accent]{term}[/]`"
-        message += f" in [$accent]{col_name}[/]" if scope == "column" else " across all columns"
+        message = f"Found [$success]{match_count}[/] matches for [$accent]{term}[/] in "
+        message += f"column [$success]{col_name}[/]" if scope == "column" else "[$success]all columns[/]"
         self.notify(message, title=title)
 
         # Recreate table for display
@@ -6027,6 +5999,7 @@ class DataFrameTable(DataTable):
 
             self.update_cell(row_key, col_key, cell_text)
 
+    @with_full_df
     def cmd_select_row_above(self) -> None:
         """Select current row and all rows above it."""
         ridx = self.cursor_ridx
@@ -6036,6 +6009,7 @@ class DataFrameTable(DataTable):
         self.setup_table()
         self.notify(f"Selected [$success]{len(rids)}[/] row(s) (current + above)", title="Select Rows")
 
+    @with_full_df
     def cmd_select_row_below(self) -> None:
         """Select current row and all rows below it."""
         ridx = self.cursor_ridx
@@ -6157,7 +6131,6 @@ class DataFrameTable(DataTable):
             self.notify("Failed to copy to clipboard", title="Copy to Clipboard", severity="error")
 
     # SQL Interface
-    @with_full_df
     def cmd_sql_simple(self) -> None:
         """Open the SQL interface screen."""
         self.app.push_screen(
@@ -6177,12 +6150,69 @@ class DataFrameTable(DataTable):
 
         self.run_sql(sql, new_tab)
 
-    @with_full_df
     def cmd_sql_advanced(self) -> None:
         """Open the advanced SQL interface screen."""
         self.app.push_screen(
             AdvancedSqlScreen(self),
             callback=self.advanced_sql,
+        )
+
+    def advanced_sql(self, result) -> None:
+        """Handle SQL result result from AdvancedSqlScreen."""
+        if result is None:
+            return
+        sql, new_tab = result
+
+        self.run_sql(sql, new_tab)
+
+    @with_full_df
+    def run_sql(self, sql: str, new_tab: bool = False) -> None:
+        """Execute a SQL query directly.
+
+        Args:
+            sql: The SQL query string to execute.
+            new_tab: Whether to show results in a new tab or update the current view.
+        """
+        # handle special internal row identifier column references
+        sql = sql.replace("RID", RID).replace("$#", f"(`{RID}` + 1)")
+
+        # Execute the SQL query
+        try:
+            df_filtered = add_rid_column(self.df.lazy().sql(sql)).collect()
+            if len(df_filtered) == 0:
+                self.notify(f"Query returned no results for [$warning]{sql}[/]", title="SQL Query", severity="warning")
+                return
+
+        except Exception as e:
+            self.notify(f"Failed to execute SQL query [$error]{sql}[/]", title="SQL Query", severity="error")
+            self.log(f"Error executing SQL query `{sql}`: {e}")
+            return
+
+        # Show results in new tab if requested
+        if new_tab:
+            return self.app.add_tab(
+                df_filtered,
+                filename="query_results.csv",
+                tabname="query-results",
+                after=self.app.tabbed.active_pane,
+            )
+
+        # Add to history
+        self.add_history(f"Run SQL Query: [$success]{sql}[/]")
+
+        # Store original dataframe in dfull if not already in a view
+        if not self.in_view:
+            self.dfull = self.df
+
+        # Update dataframe
+        self.df = df_filtered
+
+        # Recreate table for display
+        self.setup_table()
+
+        self.notify(
+            f"Query executed successfully. Now showing [$accent]{len(self.df)}[/] rows and [$accent]{len(self.df.columns)}[/] columns.",
+            title="SQL Query",
         )
 
     def cmd_toggle_python_console(self) -> None:
@@ -6258,61 +6288,3 @@ class DataFrameTable(DataTable):
             self.notify(f"Error calling {cmd_name}: {e}", title="Run Command", severity="error")
         except Exception as e:
             self.notify(f"{cmd_name} failed: {e}", title="Run Command", severity="error")
-
-    def advanced_sql(self, result) -> None:
-        """Handle SQL result result from AdvancedSqlScreen."""
-        if result is None:
-            return
-        sql, new_tab = result
-
-        self.run_sql(sql, new_tab)
-
-    @with_full_df
-    def run_sql(self, sql: str, new_tab: bool = False) -> None:
-        """Execute a SQL query directly.
-
-        Args:
-            sql: The SQL query string to execute.
-            new_tab: Whether to show results in a new tab or update the current view.
-        """
-        # handle special internal row identifier column references
-        sql = sql.replace("RID", RID).replace("$#", f"(`{RID}` + 1)")
-
-        # Execute the SQL query
-        try:
-            df_filtered = add_rid_column(self.df.lazy().sql(sql)).collect()
-            if len(df_filtered) == 0:
-                self.notify(f"Query returned no results for [$warning]{sql}[/]", title="SQL Query", severity="warning")
-                return
-
-        except Exception as e:
-            self.notify(f"Failed to execute SQL query [$error]{sql}[/]", title="SQL Query", severity="error")
-            self.log(f"Error executing SQL query `{sql}`: {e}")
-            return
-
-        # Show results in new tab if requested
-        if new_tab:
-            return self.app.add_tab(
-                df_filtered,
-                filename="query_results.csv",
-                tabname="query-results",
-                after=self.app.tabbed.active_pane,
-            )
-
-        # Add to history
-        self.add_history(f"Run SQL Query: [$success]{sql}[/]")
-
-        # Store original dataframe in dfull if not already in a view
-        if not self.in_view:
-            self.dfull = self.df
-
-        # Update dataframe
-        self.df = df_filtered
-
-        # Recreate table for display
-        self.setup_table()
-
-        self.notify(
-            f"Query executed successfully. Now showing [$accent]{len(self.df)}[/] rows and [$accent]{len(self.df.columns)}[/] columns.",
-            title="SQL Query",
-        )
