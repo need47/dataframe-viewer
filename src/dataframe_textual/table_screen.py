@@ -433,6 +433,11 @@ class TableScreen(TableModalScreen):
             self.notify(f"Column [$warning]{col_name}[/] not found", title="Filter Value", severity="warning")
             return
 
+        # Dismiss modal screen(s) to return to main table first: filtering/collecting
+        # pushes a transient BusyScreen, so popping afterward would remove that instead.
+        while len(self.app._screen_stack) > 1:
+            self.app.pop_screen()
+
         # Action collect
         if action == "collect":
             self.dftable.cmd_collect_rows(col_name=col_name, term=values)
@@ -449,11 +454,6 @@ class TableScreen(TableModalScreen):
                     "match_reverse": False,
                 }
             )
-
-        # Dismiss modal screen(s) to return to main table
-        while len(self.app._screen_stack) > 1:
-            self.app.pop_screen()
-            break
 
         self.dftable.move_cursor(column=cidx)
 
@@ -1080,6 +1080,11 @@ class FrequencyScreen(TableScreen):
             self.notify(f"Column [$warning]{col_name}[/] not found", title="Frequency", severity="warning")
             return
 
+        # Dismiss modal screen(s) to return to main table first: filtering/collecting
+        # pushes a transient BusyScreen, so popping afterward would remove that instead.
+        while len(self.app._screen_stack) > 1:
+            self.app.pop_screen()
+
         if action == "collect":
             self.dftable.cmd_collect_rows(col_name=col_name, term=expr)
         else:
@@ -1093,11 +1098,6 @@ class FrequencyScreen(TableScreen):
                     "match_reverse": False,
                 }
             )
-
-        # Dismiss modal screen to return to main table.
-        while len(self.app._screen_stack) > 1:
-            self.app.pop_screen()
-            break
 
         self.dftable.move_cursor(column=cidx)
 

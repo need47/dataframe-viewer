@@ -5562,6 +5562,7 @@ class DataFrameTable(DataTable):
         )
 
     @with_full_df
+    @with_busy_screen
     def cmd_collect_rows(self, col_name: str | None = None, term: Any | list[Any] = None) -> None:
         """Collect rows/columns to a new tab.
 
