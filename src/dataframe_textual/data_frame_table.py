@@ -353,9 +353,13 @@ class DataFrameTable(DataTable):
                         fully_loaded = False
                         break
                     else:
-                        self.notify(f"{total_loaded:{THOUSAND_SEPARATOR}} loaded so far", title="Load DataFrame")
+                        self.app.call_from_thread(
+                            self.notify, f"{total_loaded:{THOUSAND_SEPARATOR}} loaded so far", title="Load DataFrame"
+                        )
                 else:
-                    self.notify(f"{total_loaded:{THOUSAND_SEPARATOR}} loaded so far", title="Load DataFrame")
+                    self.app.call_from_thread(
+                        self.notify, f"{total_loaded:{THOUSAND_SEPARATOR}} loaded so far", title="Load DataFrame"
+                    )
         except pl.exceptions.ComputeError as e:
             self.log(f"Error loading remaining batch: {e}")
             return self.app.exit(return_code=1, result=str(e))
@@ -365,15 +369,19 @@ class DataFrameTable(DataTable):
             self.df = self.dataframe
 
             if self.loaded_rows < self.BATCH_SIZE:
-                self.load_rows_range(self.loaded_rows, self.BATCH_SIZE)
+                # Row insertion mutates the DataTable widget; run it on the app thread.
+                self.app.call_from_thread(self.load_rows_range, self.loaded_rows, self.BATCH_SIZE)
 
         # fully loaded the dataframe
         self.df_done = True
 
-        self.notify(
-            "Data fully loaded" if fully_loaded else "Data loading stopped by user",
-            title="Load DataFrame",
-            severity="information" if fully_loaded else "warning",
+        self.app.call_from_thread(
+            partial(
+                self.notify,
+                "Data fully loaded" if fully_loaded else "Data loading stopped by user",
+                title="Load DataFrame",
+                severity="information" if fully_loaded else "warning",
+            )
         )
 
     def with_full_df(func: Callable) -> Callable:
