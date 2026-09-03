@@ -2418,7 +2418,7 @@ class DataFrameTable(DataTable):
         # Otherwise, expand to widest cell
         try:
             new_width = label_width
-            need_expand = False
+            max_cell_value = ""
 
             for row_start, row_end in self.loaded_ranges:
                 for ridx in range(row_start, row_end):
@@ -2433,12 +2433,13 @@ class DataFrameTable(DataTable):
                     else:
                         cell_value = str(cell)
 
-                    cell_width = measure(self.app.console, cell_value, 1)
-                    if cell_width > new_width:
-                        need_expand = True
-                        new_width = cell_width
+                    if len(cell_value) > len(max_cell_value):
+                        max_cell_value = cell_value
 
-            if not need_expand:
+            max_cell_width = measure(self.app.console, max_cell_value, 1)
+            if max_cell_width > new_width:
+                new_width = max_cell_width
+            else:
                 return None
 
             self.column_widths[col_name] = -1  # Mark as expanded
@@ -2450,17 +2451,15 @@ class DataFrameTable(DataTable):
             return None
 
     def cmd_expand_column(self, expand_all: bool = False) -> None:
-        """Expand/unexpand string/list columns.
+        """Expand/unexpand visible columns.
 
         Args:
-            expand_all: If True, expand or unexpand all string/list columns.
+            expand_all: If True, expand or unexpand all visible columns.
                         Otherwise: expand or unexpand the current column only.
         """
         if expand_all:
-            # Collect all string/list column names
-            target_cols = [
-                col for col, dtype in self.visible_columns.items() if DtypeConfig(dtype).gtype in ("string", "list")
-            ]
+            # Collect all visiblecolumn names
+            target_cols = [col for col in self.visible_columns]
 
             if not target_cols:
                 return
@@ -2482,10 +2481,6 @@ class DataFrameTable(DataTable):
                 title="Expand Columns",
             )
         else:
-            dtype = self.cursor_col_dtype
-            if dtype != pl.String and dtype != pl.List:
-                return
-
             col_name = self.cursor_col_key.value
 
             if not (result := self._expand_single_column(col_name)):
