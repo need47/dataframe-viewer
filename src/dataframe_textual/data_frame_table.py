@@ -1370,7 +1370,7 @@ class DataFrameTable(DataTable):
         - The column label width is always the floor (label is never clipped).
         - Bar columns are fixed to BAR_COLUMN_WIDTH.
         - User-overridden columns (positive width) are fixed to ``max(label, override)``.
-        - URL-only string columns are skipped (let Textual auto-size so they stay clickable).
+        - URL-only string columns are not capped.
         - String columns whose sampled max exceeds COLUMN_WIDTH_CAP are capped at
           ``max(label_width, COLUMN_WIDTH_CAP)`` and queued for phase 2.
         - All other columns (numeric, bool, temporal, short strings, expanded columns)
@@ -1430,17 +1430,6 @@ class DataFrameTable(DataTable):
 
             try:
                 sample_values = sample_lf.select(col).collect().get_column(col).drop_nulls().to_list()
-
-                # URL columns: leave for Textual auto-sizing so links stay clickable
-                if (
-                    is_string
-                    and sample_values
-                    and any(val.startswith(("https://", "http://")) for val in sample_values)
-                ):
-                    col_widths[col] = label_width
-                    col_ideal_widths[col] = label_width
-                    continue
-
                 max_cell_width = max(
                     (
                         measure(self.app.console, str(val[:3]) if isinstance(val, list) else str(val), 1)
@@ -1454,8 +1443,11 @@ class DataFrameTable(DataTable):
 
             ideal_width = max(label_width, max_cell_width)
             col_ideal_widths[col] = ideal_width
+            is_url = (
+                is_string and sample_values and any(val.startswith(("https://", "http://")) for val in sample_values)
+            )
 
-            if is_string and not is_expanded and ideal_width > COLUMN_WIDTH_CAP:
+            if is_string and not is_expanded and not is_url and ideal_width > COLUMN_WIDTH_CAP:
                 # Cap and queue for phase 2
                 col_widths[col] = max(label_width, COLUMN_WIDTH_CAP)
                 capped_cols.append(col)
